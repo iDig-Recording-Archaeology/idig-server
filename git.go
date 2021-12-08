@@ -71,7 +71,7 @@ func (repo *Repository) Commit(uid, username, message string, surveys map[string
 	// Make sure there are changes to commit
 	err = repo.git("diff-index", "--quiet", "HEAD")
 	if err == nil {
-		return "", nil // nothing to commit
+		return repo.Head(), nil // nothing to commit
 	}
 
 	author := fmt.Sprintf("%s <%s>", username, uid)
@@ -82,6 +82,10 @@ func (repo *Repository) Commit(uid, username, message string, surveys map[string
 	}
 	err = repo.git("push", "--quiet")
 	return repo.Head(), err
+}
+
+func (repo *Repository) Checkout(version string) error {
+	return repo.git("checkout", version)
 }
 
 func (repo *Repository) ReadSurveys() (map[string]Survey, error) {

@@ -14,30 +14,83 @@ type Server struct {
 	Root string
 }
 
-type SyncRequest struct {
+type PushRequest struct {
 	UID      string            `json:"uid"`
 	UserName string            `json:"username"`
 	Message  string            `json:"message"`
 	Head     string            `json:"head"`
-	Surveys  map[string]Survey `json:"surveys,omitempty"`
+	Surveys  map[string]Survey `json:"surveys"`
 }
 
-type SyncResponse struct {
-	Status      string            `json:"status"`
-	Head        string            `json:"head"`
-	Surveys     map[string]Survey `json:"surveys,omitempty"`
-	Attachments []string          `json:"attachments,omitempty"`
+type PushResponse struct {
+	Status  string   `json:"status"`
+	Version string   `json:"version"`
+	Missing []string `json:"missing,omitempty"`
+	Updates []Patch  `json:"updates,omitempty"`
 }
 
 const (
-	StatusOK      = "ok"
-	StatusPushed  = "pushed"
-	StatusPull    = "pull"
-	StatusMissing = "missing"
-	StatusError   = "error"
+	StatusOK       = "ok"
+	StatusPushed   = "pushed"
+	StatusConflict = "conflict"
+	StatusMissing  = "missing"
 )
 
+type PullResponse struct {
+	Version string  `json:"version"`
+	Updates []Patch `json:"updates"`
+}
+
+type Change struct {
+	Key string `json:"key"`
+	Old string `json:"old"`
+	New string `json:"new"`
+}
+
+type Patch struct {
+	Id  string `json:"id"`
+	Old Survey `json:"old"`
+	New Survey `json:"new"`
+}
+
 type Survey map[string]string
+
+func (s Survey) IsEqual(t Survey) bool {
+	keys := s.Keys()
+	keys.FormUnion(t.Keys())
+	for key := range keys {
+		if s[key] != t[key] {
+			return false
+		}
+	}
+	return true
+}
+
+func (s Survey) Keys() Set {
+	keys := make(Set, len(s))
+	for key := range s {
+		keys[key] = struct{}{}
+	}
+	return keys
+}
+
+type Version map[string]Survey
+
+func (v Version) Keys() Set {
+	keys := make(Set, len(v))
+	for key := range v {
+		keys[key] = struct{}{}
+	}
+	return keys
+}
+
+type Set map[string]struct{}
+
+func (s Set) FormUnion(a Set) {
+	for k := range a {
+		s[k] = struct{}{}
+	}
+}
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("> %s %s", r.Method, r.URL)
@@ -46,7 +99,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("< %d %s", code, err)
 		http.Error(w, err.Error(), code)
 	} else {
-		log.Printf("< 200 OK")
+		log.Printf("< %d OK", code)
+		if code != http.StatusOK {
+			w.WriteHeader(code)
+		}
 	}
 }
 
@@ -66,17 +122,22 @@ func (s Server) serve(w http.ResponseWriter, r *http.Request) (int, error) {
 	dir := filepath.Join(s.Root, trench)
 	repo, err := OpenRepository(dir)
 	if err != nil {
-		return http.StatusInternalServerError, fmt.Errorf("Failed to open trench '%s': %w", trench, err)
+		return http.StatusNotFound, fmt.Errorf("Failed to open trench '%s': %w", trench, err)
 	}
 	defer repo.Close()
 
 	switch r.Method {
 	case http.MethodGet:
-		return s.handleReadAttachment(w, r, repo, name)
+		if name == "" {
+			version := r.URL.Query().Get("v")
+			return s.handlePull(w, r, repo, version)
+		} else {
+			return s.handleReadAttachment(w, r, repo, name)
+		}
 	case http.MethodPut:
 		return s.handleWriteAttachment(w, r, repo, name)
 	case http.MethodPost:
-		return s.handleSync(w, r, repo)
+		return s.handlePush(w, r, repo)
 	default:
 		return http.StatusMethodNotAllowed, fmt.Errorf("%s not allowed", r.Method)
 	}
@@ -110,44 +171,85 @@ func (s *Server) handleWriteAttachment(w http.ResponseWriter, r *http.Request, r
 	}
 }
 
-func (s *Server) handleSync(w http.ResponseWriter, r *http.Request, repo *Repository) (int, error) {
-	var req SyncRequest
+func (s *Server) handlePull(w http.ResponseWriter, r *http.Request, repo *Repository, version string) (int, error) {
+	head := repo.Head()
+	if version == head {
+		return http.StatusNoContent, nil
+	}
+
+	old := make(Version)
+	new, err := repo.ReadSurveys()
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+
+	if version != "" {
+		err := repo.Checkout(version)
+		if err != nil {
+			return http.StatusBadRequest, fmt.Errorf("Invalid version: %w", err)
+		}
+		old, err = repo.ReadSurveys()
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+	}
+
+	resp := PushResponse{
+		Status:  StatusConflict,
+		Version: head,
+		Updates: diffVersions(old, new),
+	}
+	log.Printf("< %s (%d updates)", resp.Version, len(resp.Updates))
+	return s.writeJSON(w, r, &resp)
+}
+
+func diffVersions(old, new Version) []Patch {
+	var patches []Patch
+	ids := old.Keys()
+	ids.FormUnion(new.Keys())
+	for id := range ids {
+		o := old[id]
+		n := new[id]
+		if !o.IsEqual(n) {
+			patches = append(patches, Patch{Id: id, Old: o, New: n})
+		}
+	}
+	return patches
+}
+
+func (s *Server) handlePush(w http.ResponseWriter, r *http.Request, repo *Repository) (int, error) {
+	var req PushRequest
 	dec := json.NewDecoder(r.Body)
 	err := dec.Decode(&req)
 	if err != nil {
 		return http.StatusBadRequest, fmt.Errorf("Invalid sync request: %w", err)
 	}
 
-	log.Printf(">> sync %s {uid: %q, username: %q, message: %q, surveys: <%d surveys>}",
+	log.Printf(">> push %s {uid: %q, username: %q, message: %q, surveys: <%d surveys>}",
 		req.Head, req.UID, req.UserName, req.Message, len(req.Surveys))
 
 	head := repo.Head()
-	surveys, err := repo.ReadSurveys()
-	if err != nil {
-		return http.StatusInternalServerError, fmt.Errorf("Failed to read surveys: %w", err)
-	}
 
 	if head != "" {
 		if req.Head == "" || req.Head != head {
 			// We are not on the same version, client should pull
-			resp := SyncResponse{
-				Status:  StatusPull,
-				Head:    head,
-				Surveys: surveys,
-			}
-			return s.writeSyncResponse(w, &resp)
+			_, err := s.handlePull(w, r, repo, req.Head)
+			return http.StatusOK, err
 		}
 	}
+
+	w.Header().Set("Content-Type", "application/json")
 
 	missing := s.missingAttachments(repo, req.Surveys)
 	if len(missing) > 0 {
 		// Missing attachments
-		resp := SyncResponse{
-			Status:      StatusMissing,
-			Head:        head,
-			Attachments: missing,
+		resp := PushResponse{
+			Status:  StatusMissing,
+			Version: head,
+			Missing: missing,
 		}
-		return s.writeSyncResponse(w, &resp)
+		_, err := s.writeJSON(w, r, &resp)
+		return http.StatusOK, err
 	}
 
 	newHead, err := repo.Commit(req.UID, req.UserName, req.Message, req.Surveys)
@@ -155,29 +257,21 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request, repo *Reposi
 		return http.StatusInternalServerError, err
 	}
 
-	if newHead == "" {
-		// No changes
-		resp := SyncResponse{
-			Status: StatusOK,
-			Head:   head,
-		}
-		return s.writeSyncResponse(w, &resp)
+	resp := PushResponse{
+		Status:  StatusPushed,
+		Version: newHead,
 	}
-
-	// Pushed
-	resp := SyncResponse{
-		Status: StatusPushed,
-		Head:   newHead,
-	}
-	return s.writeSyncResponse(w, &resp)
+	return s.writeJSON(w, r, &resp)
 }
 
-func (s *Server) writeSyncResponse(w http.ResponseWriter, resp *SyncResponse) (int, error) {
-	log.Printf("<< %s %s {surveys: <%d surveys>}", resp.Status, resp.Head, len(resp.Surveys))
+func (s *Server) writeJSON(w http.ResponseWriter, r *http.Request, v interface{}) (int, error) {
 	w.Header().Set("Content-Type", "application/json")
 
 	enc := json.NewEncoder(w)
-	err := enc.Encode(resp)
+	if r.URL.Query().Has("debug") {
+		enc.SetIndent("", "  ")
+	}
+	err := enc.Encode(v)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	} else {
