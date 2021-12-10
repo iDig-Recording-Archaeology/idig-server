@@ -54,6 +54,9 @@ func (repo *Repository) Head() string {
 }
 
 func (repo *Repository) Commit(uid, username, message string, surveys map[string]Survey) (string, error) {
+	if len(surveys) == 0 {
+		return repo.Head(), nil // nothing to commit
+	}
 	if err := repo.removeSurveys(); err != nil {
 		return "", err
 	}
