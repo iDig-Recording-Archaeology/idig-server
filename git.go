@@ -120,14 +120,25 @@ func (repo *Repository) OpenAttachment(name string) (*os.File, error) {
 func (repo *Repository) WriteAttachment(name string, r io.ReadCloser) error {
 	dir := filepath.Join(repo.gitDir, "attachments")
 	os.MkdirAll(dir, 0o755)
-	attachment := filepath.Join(dir, name)
-	f, err := os.Create(attachment)
+
+	// Write atomically
+	f, err := os.CreateTemp(dir, name)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+
+	temp := f.Name()
+	dst := filepath.Join(dir, name)
+
 	_, err = io.Copy(f, r)
-	return err
+	if err != nil {
+		os.Remove(temp)
+		return err
+	} else {
+		os.Chmod(temp, 0o644)
+		return os.Rename(temp, dst)
+	}
 }
 
 func (repo *Repository) ExistsAttachment(name string) bool {
@@ -199,7 +210,6 @@ func fileExists(name string) bool {
 }
 
 func run(args ...string) error {
-	// log.Printf("RUN %v", args)
 	cmd := exec.Command(args[0], args[1:]...)
 	stdout, err := cmd.Output()
 	out := strings.TrimSpace(string(stdout))
