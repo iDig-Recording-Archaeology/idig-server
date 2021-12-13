@@ -36,17 +36,6 @@ const (
 	StatusMissing  = "missing"
 )
 
-type PullResponse struct {
-	Version string  `json:"version"`
-	Updates []Patch `json:"updates"`
-}
-
-type Change struct {
-	Key string `json:"key"`
-	Old string `json:"old"`
-	New string `json:"new"`
-}
-
 type Patch struct {
 	Id  string `json:"id"`
 	Old Survey `json:"old"`
@@ -184,13 +173,14 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request, repo *Reposi
 	}
 
 	if version != "" {
+		// Try to checkout this version.
+		// If we fail, fallback to the empty version
 		err := repo.Checkout(version)
-		if err != nil {
-			return http.StatusBadRequest, fmt.Errorf("Invalid version: %w", err)
-		}
-		old, err = repo.ReadSurveys()
-		if err != nil {
-			return http.StatusInternalServerError, err
+		if err == nil {
+			old, err = repo.ReadSurveys()
+			if err != nil {
+				return http.StatusInternalServerError, err
+			}
 		}
 	}
 
