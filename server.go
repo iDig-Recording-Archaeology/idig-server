@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -85,10 +86,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("> %s %s", r.Method, r.URL)
 	code, err := s.serve(w, r)
 	if err != nil {
-		log.Printf("< %d %s", code, err)
+		log.Printf("< error %s", err)
 		http.Error(w, err.Error(), code)
 	} else {
-		log.Printf("< %d OK", code)
 		if code != http.StatusOK {
 			w.WriteHeader(code)
 		}
@@ -117,12 +117,7 @@ func (s Server) serve(w http.ResponseWriter, r *http.Request) (int, error) {
 
 	switch r.Method {
 	case http.MethodGet:
-		if name == "" {
-			version := r.URL.Query().Get("v")
-			return s.handlePull(w, r, repo, version)
-		} else {
-			return s.handleReadAttachment(w, r, repo, name)
-		}
+		return s.handleReadAttachment(w, r, repo, name)
 	case http.MethodPut:
 		return s.handleWriteAttachment(w, r, repo, name)
 	case http.MethodPost:
@@ -133,7 +128,9 @@ func (s Server) serve(w http.ResponseWriter, r *http.Request) (int, error) {
 }
 
 func (s *Server) handleReadAttachment(w http.ResponseWriter, r *http.Request, repo *Repository, name string) (int, error) {
-	f, err := repo.OpenAttachment(name)
+	checksum := strings.Trim(r.Header.Get("If-Match"), "\"")
+	log.Printf("> read %s [%s]", name, checksum)
+	f, err := repo.OpenAttachment(name, checksum)
 	if err != nil {
 		return http.StatusNotFound, err
 	}
@@ -142,55 +139,116 @@ func (s *Server) handleReadAttachment(w http.ResponseWriter, r *http.Request, re
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	log.Printf(">> read %s (%d bytes)", name, fi.Size())
+	w.Header().Set("ETag", fmt.Sprintf("\"%s\"", checksum))
 	http.ServeContent(w, r, name, fi.ModTime(), f)
+	log.Printf("< read %s [%s] (%d bytes)", name, checksum, fi.Size())
 	return http.StatusOK, nil
 }
 
 func (s *Server) handleWriteAttachment(w http.ResponseWriter, r *http.Request, repo *Repository, name string) (int, error) {
+	defer func() {
+		// Drain the body and close
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+	}()
 	if name == "" {
 		return http.StatusBadRequest, fmt.Errorf("Invalid attachment name")
 	}
-	log.Printf(">> write %s", name)
-	err := repo.WriteAttachment(name, r.Body)
+	checksum := strings.Trim(r.Header.Get("ETag"), "\"")
+	if checksum == "" {
+		return http.StatusBadRequest, fmt.Errorf("Missing etag")
+	}
+	log.Printf("> write %s [%s]", name, checksum)
+	err := repo.WriteAttachment(name, checksum, r.Body)
 	if err != nil {
 		return http.StatusInternalServerError, fmt.Errorf("Could not write attachment '%s': %w", name, err)
 	} else {
+		log.Printf("< wrote %s [%s]", name, checksum)
 		return http.StatusOK, nil
 	}
 }
 
-func (s *Server) handlePull(w http.ResponseWriter, r *http.Request, repo *Repository, version string) (int, error) {
-	head := repo.Head()
-	if version == head {
-		return http.StatusNoContent, nil
+func (s *Server) handlePush(w http.ResponseWriter, r *http.Request, repo *Repository) (int, error) {
+	var req PushRequest
+	dec := json.NewDecoder(r.Body)
+	err := dec.Decode(&req)
+	if err != nil {
+		return http.StatusBadRequest, fmt.Errorf("Invalid sync request: %w", err)
 	}
 
-	old := make(Version)
-	new, err := repo.ReadSurveys()
+	log.Printf("> push %s {uid: %q, username: %q, surveys: <%d surveys>}",
+		req.Head, req.UID, req.UserName, len(req.Surveys))
+
+	head := repo.Head()
+
+	if head != "" {
+		if req.Head == "" || req.Head != head {
+			// We are not on the same version, client should pull
+			old := make(Version)
+			new, err := repo.ReadSurveys()
+			if err != nil {
+				return http.StatusInternalServerError, err
+			}
+
+			if req.Head != "" {
+				// Try to checkout this version.
+				// If we fail, fallback to the empty version
+				err := repo.Checkout(req.Head)
+				if err == nil {
+					old, err = repo.ReadSurveys()
+					if err != nil {
+						return http.StatusInternalServerError, err
+					}
+				}
+			}
+
+			resp := PushResponse{
+				Status:  StatusConflict,
+				Version: head,
+				Updates: diffVersions(old, new),
+			}
+			log.Printf("< conflict %s [<%d updates>]", resp.Version, len(resp.Updates))
+			return s.writeJSON(w, r, &resp)
+		}
+	}
+
+	missing := s.missingAttachments(repo, req.Surveys)
+	if len(missing) > 0 {
+		// Missing attachments
+		resp := PushResponse{
+			Status:  StatusMissing,
+			Version: head,
+			Missing: missing,
+		}
+		if len(missing) < 4 {
+			log.Printf("< missing [%s]", strings.Join(missing, ", "))
+		} else {
+			log.Printf("< missing [<%d attachments>]", len(missing))
+		}
+		_, err := s.writeJSON(w, r, &resp)
+		return http.StatusOK, err
+	}
+
+	newHead, err := repo.Commit(req.UID, req.UserName, req.Message, req.Surveys)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
 
-	if version != "" {
-		// Try to checkout this version.
-		// If we fail, fallback to the empty version
-		err := repo.Checkout(version)
-		if err == nil {
-			old, err = repo.ReadSurveys()
-			if err != nil {
-				return http.StatusInternalServerError, err
-			}
+	if newHead != head {
+		resp := PushResponse{
+			Status:  StatusPushed,
+			Version: newHead,
 		}
+		log.Printf("< pushed %s", newHead)
+		return s.writeJSON(w, r, &resp)
+	} else {
+		resp := PushResponse{
+			Status:  StatusOK,
+			Version: head,
+		}
+		log.Printf("< ok %s", head)
+		return s.writeJSON(w, r, &resp)
 	}
-
-	resp := PushResponse{
-		Status:  StatusConflict,
-		Version: head,
-		Updates: diffVersions(old, new),
-	}
-	log.Printf("< %s (%d updates)", resp.Version, len(resp.Updates))
-	return s.writeJSON(w, r, &resp)
 }
 
 func diffVersions(old, new Version) []Patch {
@@ -205,53 +263,6 @@ func diffVersions(old, new Version) []Patch {
 		}
 	}
 	return patches
-}
-
-func (s *Server) handlePush(w http.ResponseWriter, r *http.Request, repo *Repository) (int, error) {
-	var req PushRequest
-	dec := json.NewDecoder(r.Body)
-	err := dec.Decode(&req)
-	if err != nil {
-		return http.StatusBadRequest, fmt.Errorf("Invalid sync request: %w", err)
-	}
-
-	log.Printf(">> push %s {uid: %q, username: %q, message: %q, surveys: <%d surveys>}",
-		req.Head, req.UID, req.UserName, req.Message, len(req.Surveys))
-
-	head := repo.Head()
-
-	if head != "" {
-		if req.Head == "" || req.Head != head {
-			// We are not on the same version, client should pull
-			_, err := s.handlePull(w, r, repo, req.Head)
-			return http.StatusOK, err
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	missing := s.missingAttachments(repo, req.Surveys)
-	if len(missing) > 0 {
-		// Missing attachments
-		resp := PushResponse{
-			Status:  StatusMissing,
-			Version: head,
-			Missing: missing,
-		}
-		_, err := s.writeJSON(w, r, &resp)
-		return http.StatusOK, err
-	}
-
-	newHead, err := repo.Commit(req.UID, req.UserName, req.Message, req.Surveys)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-
-	resp := PushResponse{
-		Status:  StatusPushed,
-		Version: newHead,
-	}
-	return s.writeJSON(w, r, &resp)
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, r *http.Request, v interface{}) (int, error) {
@@ -272,14 +283,29 @@ func (s *Server) writeJSON(w http.ResponseWriter, r *http.Request, v interface{}
 func (s *Server) missingAttachments(repo *Repository, surveys map[string]Survey) []string {
 	var missing []string
 	for _, survey := range surveys {
-		name := survey["FormatImage"]
-		if name == "" {
-			continue
-		}
-		if !repo.ExistsAttachment(name) {
-			missing = append(missing, name)
+		attachments := strings.Split(survey["RelationAttachments"], "\n\n")
+		for _, a := range attachments {
+			var name, ts string
+			for _, s := range strings.Split(a, "\n") {
+				key, val := Cut(s, "=")
+				if key == "n" {
+					name = val
+				} else if key == "d" {
+					ts = val
+				}
+			}
+			if name != "" && ts != "" && !repo.ExistsAttachment(name, ts) {
+				missing = append(missing, name)
+			}
 		}
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+func Cut(s, sep string) (before, after string) {
+	if i := strings.Index(s, sep); i >= 0 {
+		return s[:i], s[i+len(sep):]
+	}
+	return s, ""
 }

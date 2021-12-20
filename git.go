@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,12 +113,11 @@ func (repo *Repository) ReadSurveys() (map[string]Survey, error) {
 	return surveys, nil
 }
 
-func (repo *Repository) OpenAttachment(name string) (*os.File, error) {
-	file := filepath.Join(repo.gitDir, "attachments", name)
-	return os.Open(file)
+func (repo *Repository) OpenAttachment(name, checksum string) (*os.File, error) {
+	return os.Open(repo.attachmentPath(name, checksum))
 }
 
-func (repo *Repository) WriteAttachment(name string, r io.ReadCloser) error {
+func (repo *Repository) WriteAttachment(name, checksum string, r io.ReadCloser) error {
 	dir := filepath.Join(repo.gitDir, "attachments")
 	os.MkdirAll(dir, 0o755)
 
@@ -129,7 +129,7 @@ func (repo *Repository) WriteAttachment(name string, r io.ReadCloser) error {
 	defer f.Close()
 
 	temp := f.Name()
-	dst := filepath.Join(dir, name)
+	dst := repo.attachmentPath(name, checksum)
 
 	_, err = io.Copy(f, r)
 	if err != nil {
@@ -141,9 +141,16 @@ func (repo *Repository) WriteAttachment(name string, r io.ReadCloser) error {
 	}
 }
 
-func (repo *Repository) ExistsAttachment(name string) bool {
-	file := filepath.Join(repo.gitDir, "attachments", name)
-	return fileExists(file)
+func (repo *Repository) ExistsAttachment(name, checksum string) bool {
+	return fileExists(repo.attachmentPath(name, checksum))
+}
+
+func (repo *Repository) attachmentPath(name, checksum string) string {
+	ext := filepath.Ext(name)
+	id := url.PathEscape(name[:len(name)-len(ext)])
+	sum := url.PathEscape(checksum)
+	filename := fmt.Sprintf("%s.%s%s", id, sum, ext)
+	return filepath.Join(repo.gitDir, "attachments", filename)
 }
 
 func (repo *Repository) removeSurveys() error {
