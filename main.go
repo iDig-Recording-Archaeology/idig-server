@@ -54,11 +54,10 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 
 	head := b.Head()
 
-	// When the client head is empty we always return `conflict`, so that they
-	// get the latest version.
 	// When our head is empty, we let the client push. This could happen if they
-	// had synced before and we somehow reset our state.
-	if req.Head == "" || (req.Head != head && head != "") {
+	// had synced before and we somehow reset our state, or when they are starting
+	// from scratch.
+	if head != "" && req.Head != head {
 		// Ignore errors here, we just fallback to empty list
 		old, _ := b.ReadSurveysAtVersion(req.Head)
 		new, err := b.ReadSurveys()
