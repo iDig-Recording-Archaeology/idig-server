@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,18 +15,20 @@ import (
 )
 
 type SyncRequest struct {
-	UID      string   `json:"uid"`      // User or device identifier
-	UserName string   `json:"username"` // User name
-	Message  string   `json:"message"`  // Commit message (can be empty)
-	Head     string   `json:"head"`     // Client's last sync version (can be empty)
-	Surveys  []Survey `json:"surveys"`  // Surveys to be committed
+	UID         string   `json:"uid"`         // User or device identifier
+	UserName    string   `json:"username"`    // User name
+	Message     string   `json:"message"`     // Commit message (can be empty)
+	Head        string   `json:"head"`        // Client's last sync version (can be empty)
+	Preferences []byte   `json:"preferences"` // Preferences file serialized
+	Surveys     []Survey `json:"surveys"`     // Surveys to be committed
 }
 
 type SyncResponse struct {
-	Status  string   `json:"status"`            // One of: ok, pushed, missing, conflict
-	Version string   `json:"version"`           // Current version of the server
-	Missing []string `json:"missing,omitempty"` // List of missing attachments
-	Updates []Patch  `json:"updates,omitempty"` // List of patches need to be applied on the client
+	Status      string   `json:"status"`                // One of: ok, pushed, missing, conflict
+	Version     string   `json:"version"`               // Current version of the server
+	Preferences []byte   `json:"preferences,omitempty"` // Serialized preferences if different
+	Missing     []string `json:"missing,omitempty"`     // List of missing attachments
+	Updates     []Patch  `json:"updates,omitempty"`     // List of patches need to be applied on the client
 }
 
 // Sync Status
@@ -83,6 +86,16 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 			Version: head,
 			Updates: patches,
 		}
+
+		oldPrefs, _ := b.ReadPreferencesAtVersion(req.Head)
+		newPrefs, err := b.ReadPreferences()
+		if err != nil {
+			return err
+		}
+		if bytes.Compare(oldPrefs, newPrefs) != 0 {
+			resp.Preferences = newPrefs
+		}
+
 		log.Printf("< SYNC %s %s", b.Trench, resp)
 		return writeJSON(w, r, &resp)
 	}
@@ -108,7 +121,7 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 		return writeJSON(w, r, &resp)
 	}
 
-	newHead, err := b.WriteTrench(req.UID, req.UserName, req.Message, req.Surveys)
+	newHead, err := b.WriteTrench(req.UID, req.UserName, req.Message, req.Preferences, req.Surveys)
 	if err != nil {
 		return err
 	}
@@ -243,6 +256,9 @@ func (r SyncResponse) String() string {
 	s := fmt.Sprintf("{status: %s, version: %s", r.Status, Prefix(r.Version, 7))
 	if len(r.Missing) > 0 {
 		s += fmt.Sprintf(", missing: [%d attachments]", len(r.Missing))
+	}
+	if len(r.Preferences) > 0 {
+		s += fmt.Sprintf(", preferences: <%d bytes>", len(r.Preferences))
 	}
 	if len(r.Updates) > 0 {
 		s += fmt.Sprintf(", updates: [%d patches]", len(r.Updates))
