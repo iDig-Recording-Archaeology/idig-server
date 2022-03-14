@@ -78,6 +78,32 @@ func (b *Backend) ReadAttachment(name, checksum string) ([]byte, error) {
 	return b.readBlob(ref.Hash())
 }
 
+func (b *Backend) ReadPreferences() ([]byte, error) {
+	head := b.Head()
+	if head == "" {
+		return nil, nil
+	} else {
+		return b.ReadPreferencesAtVersion(head)
+	}
+}
+
+func (b *Backend) ReadPreferencesAtVersion(version string) ([]byte, error) {
+	h := plumbing.NewHash(version)
+	commit, err := b.r.CommitObject(h)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid version %s", version)
+	}
+	rootTree, err := b.r.TreeObject(commit.TreeHash)
+	if err != nil {
+		return nil, err
+	}
+	entry, err := rootTree.FindEntry("Preferences.json")
+	if err != nil {
+		return nil, err
+	}
+	return b.readBlob(entry.Hash)
+}
+
 func (b *Backend) ReadSurveys() ([]Survey, error) {
 	head := b.Head()
 	if head == "" {
@@ -193,9 +219,14 @@ func (b *Backend) WriteAttachment(name, checksum string, data []byte) error {
 	return nil
 }
 
-func (b *Backend) WriteTrench(uid, username, message string, surveys []Survey) (string, error) {
-	var entries []object.TreeEntry
+func (b *Backend) WriteTrench(uid, username, message string, preferences []byte, surveys []Survey) (string, error) {
+	var surveyEntries []object.TreeEntry
 	var attachmentEntries []object.TreeEntry
+
+	preferencesHash, err := b.addBlob(preferences)
+	if err != nil {
+		return "", fmt.Errorf("Failed to write preferences: %w", err)
+	}
 
 	for _, survey := range surveys {
 		id := survey.ID()
@@ -209,7 +240,7 @@ func (b *Backend) WriteTrench(uid, username, message string, surveys []Survey) (
 			return "", fmt.Errorf("Failed to write survey %s data: %w", id, err)
 		}
 		e := object.TreeEntry{Name: name, Mode: filemode.Regular, Hash: h}
-		entries = append(entries, e)
+		surveyEntries = append(surveyEntries, e)
 
 		for _, a := range survey.Attachments() {
 			refName := fmt.Sprintf("refs/attachments/%s/%s", a.Name, a.Checksum)
@@ -222,7 +253,7 @@ func (b *Backend) WriteTrench(uid, username, message string, surveys []Survey) (
 			attachmentEntries = append(attachmentEntries, e)
 		}
 	}
-	surveysTree, err := b.addTree(entries)
+	surveysTree, err := b.addTree(surveyEntries)
 	if err != nil {
 		return "", err
 	}
@@ -234,6 +265,7 @@ func (b *Backend) WriteTrench(uid, username, message string, surveys []Survey) (
 	rootEntries := []object.TreeEntry{
 		{Name: "attachments", Mode: filemode.Dir, Hash: attachmentsTree},
 		{Name: "surveys", Mode: filemode.Dir, Hash: surveysTree},
+		{Name: "Preferences.json", Mode: filemode.Regular, Hash: preferencesHash},
 	}
 	rootTree, err := b.addTree(rootEntries)
 	if err != nil {
