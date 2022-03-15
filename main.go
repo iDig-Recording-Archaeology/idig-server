@@ -14,9 +14,14 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// Global state
+var (
+	RootDir string
+	Users   *UserDB
+)
+
 type SyncRequest struct {
-	UID         string   `json:"uid"`         // User or device identifier
-	UserName    string   `json:"username"`    // User name
+	Device      string   `json:"device"`      // Device name making the request
 	Message     string   `json:"message"`     // Commit message (can be empty)
 	Head        string   `json:"head"`        // Client's last sync version (can be empty)
 	Preferences []byte   `json:"preferences"` // Preferences file serialized
@@ -121,7 +126,7 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 		return writeJSON(w, r, &resp)
 	}
 
-	newHead, err := b.WriteTrench(req.UID, req.UserName, req.Message, req.Preferences, req.Surveys)
+	newHead, err := b.WriteTrench(req.Device, req.Message, req.Preferences, req.Surveys)
 	if err != nil {
 		return err
 	}
@@ -248,8 +253,8 @@ func writeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
 }
 
 func (r SyncRequest) String() string {
-	return fmt.Sprintf("{head: %s, uid: %s, username: %s, surveys: [%d surveys]}",
-		Prefix(r.Head, 7), Prefix(r.UID, 8), r.UserName, len(r.Surveys))
+	return fmt.Sprintf("{head: %s, device: %s, surveys: [%d surveys]}",
+		Prefix(r.Head, 7), r.Device, len(r.Surveys))
 }
 
 func (r SyncResponse) String() string {
@@ -268,10 +273,24 @@ func (r SyncResponse) String() string {
 
 type ServerHandler func(http.ResponseWriter, *http.Request, *Backend) error
 
-func addRoute(r *mux.Router, method, path, rootDir string, handler ServerHandler) {
+func addRoute(r *mux.Router, method, path string, handler ServerHandler) {
 	// Wrapper function to turn handler into http.HandleFunc compatible form
 	h := func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s", r.Method, r.URL)
+
+		user, password, ok := r.BasicAuth()
+		if !ok {
+			msg := "Missing authorization header"
+			log.Println(msg)
+			http.Error(w, msg, http.StatusUnauthorized)
+			return
+		}
+		if !Users.HasAccess(user, password) {
+			msg := "Invalid username or password"
+			log.Println(msg)
+			http.Error(w, msg, http.StatusUnauthorized)
+			return
+		}
 
 		vars := mux.Vars(r)
 		trench := vars["trench"]
@@ -280,7 +299,7 @@ func addRoute(r *mux.Router, method, path, rootDir string, handler ServerHandler
 			return
 		}
 
-		b, err := NewBackend(rootDir, trench)
+		b, err := NewBackend(RootDir, user, trench)
 		if err != nil {
 			msg := fmt.Sprintf("Error initializing backend for %s: %s", trench, err)
 			log.Println(msg)
@@ -303,15 +322,20 @@ func main() {
 	portFlag := flag.Int("p", 9000, "Listen on this port")
 	flag.Parse()
 
-	rootDir := *rootFlag
+	var err error
+	RootDir = *rootFlag
+	Users, err = NewUserDB(filepath.Join(RootDir, "passwd"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	r := mux.NewRouter()
 
-	addRoute(r, "POST", "/{trench}", rootDir, SyncTrench)
-	addRoute(r, "GET", "/{trench}/attachments/{name}", rootDir, ReadAttachment)
-	addRoute(r, "PUT", "/{trench}/attachments/{name}", rootDir, WriteAttachment)
-	addRoute(r, "GET", "/{trench}/surveys", rootDir, ReadSurveys)
-	addRoute(r, "GET", "/{trench}/surveys/{uuid}/versions", rootDir, ReadSurveyVersions)
-	addRoute(r, "GET", "/{trench}/versions", rootDir, ListVersions)
+	addRoute(r, "POST", "/{trench}", SyncTrench)
+	addRoute(r, "GET", "/{trench}/attachments/{name}", ReadAttachment)
+	addRoute(r, "PUT", "/{trench}/attachments/{name}", WriteAttachment)
+	addRoute(r, "GET", "/{trench}/surveys", ReadSurveys)
+	addRoute(r, "GET", "/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
+	addRoute(r, "GET", "/{trench}/versions", ListVersions)
 
 	addr := fmt.Sprintf(":%d", *portFlag)
 	s := &http.Server{

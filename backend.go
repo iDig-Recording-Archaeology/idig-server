@@ -18,11 +18,12 @@ import (
 )
 
 type Backend struct {
+	User   string
 	Trench string
 	r      *git.Repository
 }
 
-func NewBackend(root, trench string) (*Backend, error) {
+func NewBackend(root, user, trench string) (*Backend, error) {
 	gitDir := filepath.Join(root, trench)
 	r, err := git.PlainOpen(gitDir)
 	if errors.Is(err, git.ErrRepositoryNotExists) {
@@ -32,6 +33,7 @@ func NewBackend(root, trench string) (*Backend, error) {
 		return nil, fmt.Errorf("Failed to open repository for '%s': %w", trench, err)
 	}
 	b := &Backend{
+		User:   user,
 		Trench: trench,
 		r:      r,
 	}
@@ -219,7 +221,7 @@ func (b *Backend) WriteAttachment(name, checksum string, data []byte) error {
 	return nil
 }
 
-func (b *Backend) WriteTrench(uid, username, message string, preferences []byte, surveys []Survey) (string, error) {
+func (b *Backend) WriteTrench(device, message string, preferences []byte, surveys []Survey) (string, error) {
 	var surveyEntries []object.TreeEntry
 	var attachmentEntries []object.TreeEntry
 
@@ -286,7 +288,7 @@ func (b *Backend) WriteTrench(uid, username, message string, preferences []byte,
 			return c.Hash.String(), nil
 		}
 	}
-	commit, err := b.addCommit(uid, username, message, rootTree, parents)
+	commit, err := b.addCommit(b.User, device, message, rootTree, parents)
 	if err != nil {
 		return "", err
 	}
@@ -319,10 +321,10 @@ func (b *Backend) addBlob(data []byte) (plumbing.Hash, error) {
 	return b.r.Storer.SetEncodedObject(obj)
 }
 
-func (b *Backend) addCommit(uid, username, message string, tree plumbing.Hash, parents []plumbing.Hash) (plumbing.Hash, error) {
+func (b *Backend) addCommit(user, device, message string, tree plumbing.Hash, parents []plumbing.Hash) (plumbing.Hash, error) {
 	author := object.Signature{
-		Name:  username,
-		Email: uid,
+		Name:  user,
+		Email: device,
 		When:  time.Now(),
 	}
 	commit := object.Commit{
