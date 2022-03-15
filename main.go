@@ -299,7 +299,8 @@ func addRoute(r *mux.Router, method, path string, handler ServerHandler) {
 			return
 		}
 
-		b, err := NewBackend(RootDir, user, trench)
+		trenchesDir := filepath.Join(RootDir, "trenches")
+		b, err := NewBackend(trenchesDir, user, trench)
 		if err != nil {
 			msg := fmt.Sprintf("Error initializing backend for %s: %s", trench, err)
 			log.Println(msg)
