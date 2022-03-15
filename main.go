@@ -319,7 +319,10 @@ func addRoute(r *mux.Router, method, path string, handler ServerHandler) {
 
 func main() {
 	rootFlag := flag.String("r", ".", "Root dir of Git repositories")
-	portFlag := flag.Int("p", 9000, "Listen on this port")
+	tlsFlag := flag.String("s", "", "Serve TLS with auto-generated certificate for this hostname")
+	emailFlag := flag.String("e", "", "Contact email for certificate registration")
+	addrFlag := flag.String("A", "127.0.0.1", "Address to listen on")
+	portFlag := flag.Int("p", 80, "Port to listen on")
 	flag.Parse()
 
 	var err error
@@ -337,12 +340,16 @@ func main() {
 	addRoute(r, "GET", "/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
 	addRoute(r, "GET", "/{trench}/versions", ListVersions)
 
-	addr := fmt.Sprintf(":%d", *portFlag)
-	s := &http.Server{
-		Addr:    fmt.Sprintf(":%d", *portFlag),
-		Handler: r,
-	}
+	if *tlsFlag != "" {
+		log.Fatal(ListenAndServeTLS(r, *tlsFlag, *emailFlag))
+	} else {
+		addr := fmt.Sprintf("%s:%d", *addrFlag, *portFlag)
+		s := &http.Server{
+			Addr:    addr,
+			Handler: r,
+		}
 
-	log.Printf("Listening on %s", addr)
-	log.Fatal(s.ListenAndServe())
+		log.Printf("Listening on %s", addr)
+		log.Fatal(s.ListenAndServe())
+	}
 }
