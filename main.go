@@ -334,12 +334,12 @@ func main() {
 	}
 	r := mux.NewRouter()
 
-	addRoute(r, "POST", "/{trench}", SyncTrench)
-	addRoute(r, "GET", "/{trench}/attachments/{name}", ReadAttachment)
-	addRoute(r, "PUT", "/{trench}/attachments/{name}", WriteAttachment)
-	addRoute(r, "GET", "/{trench}/surveys", ReadSurveys)
-	addRoute(r, "GET", "/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
-	addRoute(r, "GET", "/{trench}/versions", ListVersions)
+	addRoute(r, "POST", "/idig/{trench}", SyncTrench)
+	addRoute(r, "GET", "/idig/{trench}/attachments/{name}", ReadAttachment)
+	addRoute(r, "PUT", "/idig/{trench}/attachments/{name}", WriteAttachment)
+	addRoute(r, "GET", "/idig/{trench}/surveys", ReadSurveys)
+	addRoute(r, "GET", "/idig/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
+	addRoute(r, "GET", "/idig/{trench}/versions", ListVersions)
 
 	if *tlsFlag != "" {
 		log.Fatal(ListenAndServeTLS(r, *tlsFlag, *emailFlag))
