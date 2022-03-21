@@ -1,0 +1,4 @@
+# Lines starting with # are ignored
+# Format is:
+#   USER:PASSWORD
+idig:idig
