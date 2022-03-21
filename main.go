@@ -9,16 +9,30 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"os"
 	"path/filepath"
 
+	_ "embed"
+
 	"github.com/gorilla/mux"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 // Global state
 var (
-	RootDir string
-	Users   *UserDB
+	// Controlled by flags
+	ContactEmail string
+	HostName     string
+	ListenAddr   string
+	ListenAll    bool
+	ListenPort   int
+	RootDir      string
+
+	Users *UserDB
 )
+
+//go:embed "users.DEFAULT"
+var defaultUsers []byte
 
 type SyncRequest struct {
 	Device      string   `json:"device"`      // Device name making the request
@@ -318,17 +332,41 @@ func addRoute(r *mux.Router, method, path string, handler ServerHandler) {
 	r.HandleFunc(path, h).Methods(method)
 }
 
+func init() {
+	flag.StringVar(&ListenAddr, "A", "", "Address to listen on")
+	flag.BoolVar(&ListenAll, "a", false, "Listen on all addresses")
+	flag.StringVar(&ContactEmail, "e", "", "Contact email for certificate registration")
+	flag.IntVar(&ListenPort, "p", 0, "Port to listen on")
+	flag.StringVar(&RootDir, "r", ".", "Root dir of Git repositories")
+	flag.StringVar(&HostName, "s", "", "Serve TLS with auto-generated certificate for this hostname")
+}
+
 func main() {
-	rootFlag := flag.String("r", ".", "Root dir of Git repositories")
-	tlsFlag := flag.String("s", "", "Serve TLS with auto-generated certificate for this hostname")
-	emailFlag := flag.String("e", "", "Contact email for certificate registration")
-	addrFlag := flag.String("A", "127.0.0.1", "Address to listen on")
-	portFlag := flag.Int("p", 80, "Port to listen on")
 	flag.Parse()
 
+	usersFile := filepath.Join(RootDir, "users")
+	if _, err := os.Stat(usersFile); os.IsNotExist(err) {
+		err := os.WriteFile(usersFile, defaultUsers, 0o644)
+		if err != nil {
+			log.Fatalf("Could not create default users file: %s", err)
+		}
+		usersPath, err := filepath.Abs(usersFile)
+		if err != nil {
+			usersPath = usersFile
+		}
+		log.Printf("Created users file at: %s", usersPath)
+		log.Printf("Default username: idig")
+		log.Printf("Default password: idig")
+	}
+
+	if ListenAddr == "" && ListenPort == 0 && ListenAll == false && HostName == "" {
+		// No arguments were given, use default values
+		ListenAll = true
+		ListenPort = 9000
+	}
+
 	var err error
-	RootDir = *rootFlag
-	Users, err = NewUserDB(filepath.Join(RootDir, "passwd"))
+	Users, err = NewUserDB(usersFile)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -341,16 +379,40 @@ func main() {
 	addRoute(r, "GET", "/idig/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
 	addRoute(r, "GET", "/idig/{trench}/versions", ListVersions)
 
-	if *tlsFlag != "" {
-		log.Fatal(ListenAndServeTLS(r, *tlsFlag, *emailFlag))
+	if HostName != "" {
+		m := &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			Cache:      autocert.DirCache(filepath.Join(RootDir, "certs")),
+			HostPolicy: autocert.HostWhitelist(HostName),
+			Email:      ContactEmail,
+		}
+		s := &http.Server{
+			Addr:      ":443",
+			Handler:   r,
+			TLSConfig: m.TLSConfig(),
+		}
+
+		// Listen on port 80 for HTTPS challenge responses, otherwise redirect to HTTPS
+		go http.ListenAndServe(":80", m.HTTPHandler(nil))
+		log.Printf("iDig can connect to this server at: https://%s\n", HostName)
+		log.Fatal(s.ListenAndServeTLS("", ""))
 	} else {
-		addr := fmt.Sprintf("%s:%d", *addrFlag, *portFlag)
+		ip, err := GetOutboundIP()
+		if err != nil {
+			log.Fatalf("Failed to get outbound IP: %s", err)
+		}
+
+		addr := fmt.Sprintf("%s:%d", ListenAddr, ListenPort)
 		s := &http.Server{
 			Addr:    addr,
 			Handler: r,
 		}
 
-		log.Printf("Listening on %s", addr)
+		if ListenPort != 80 {
+			log.Printf("iDig can connect to this server at: http://%s:%d\n", ip, ListenPort)
+		} else {
+			log.Printf("iDig can connect to this server at: http://%s\n", ip)
+		}
 		log.Fatal(s.ListenAndServe())
 	}
 }

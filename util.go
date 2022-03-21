@@ -1,9 +1,26 @@
 package main
 
 import (
+	"fmt"
+	"net"
 	"sort"
 	"strings"
 )
+
+// This function does not make any actual connections
+func GetOutboundIP() (net.IP, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:53")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return nil, fmt.Errorf("Could not get outbound IP")
+	}
+	return addr.IP, nil
+}
 
 func Cut(s, sep string) (before, after string) {
 	if i := strings.Index(s, sep); i >= 0 {
