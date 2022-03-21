@@ -364,6 +364,12 @@ func main() {
 		ListenAll = true
 		ListenPort = 9000
 	}
+	if ListenAll {
+		ListenAddr = "0.0.0.0"
+	} else if ListenAddr == "" && HostName == "" {
+		// If neither of -A, -a or -s were given, then listen on localhost only
+		ListenAddr = "127.0.0.1"
+	}
 
 	var err error
 	Users, err = NewUserDB(usersFile)
@@ -380,6 +386,7 @@ func main() {
 	addRoute(r, "GET", "/idig/{trench}/versions", ListVersions)
 
 	if HostName != "" {
+		addr := fmt.Sprintf("%s:443", ListenAddr)
 		m := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			Cache:      autocert.DirCache(filepath.Join(RootDir, "certs")),
@@ -387,7 +394,7 @@ func main() {
 			Email:      ContactEmail,
 		}
 		s := &http.Server{
-			Addr:      ":443",
+			Addr:      addr,
 			Handler:   r,
 			TLSConfig: m.TLSConfig(),
 		}
@@ -397,21 +404,23 @@ func main() {
 		log.Printf("iDig can connect to this server at: https://%s\n", HostName)
 		log.Fatal(s.ListenAndServeTLS("", ""))
 	} else {
-		ip, err := GetOutboundIP()
-		if err != nil {
-			log.Fatalf("Failed to get outbound IP: %s", err)
-		}
-
 		addr := fmt.Sprintf("%s:%d", ListenAddr, ListenPort)
 		s := &http.Server{
 			Addr:    addr,
 			Handler: r,
 		}
 
+		ip := ListenAddr
+		if ip == "0.0.0.0" {
+			if outboundIP, err := GetOutboundIP(); err == nil {
+				ip = outboundIP.String()
+			}
+		}
+
 		if ListenPort != 80 {
-			log.Printf("iDig can connect to this server at: http://%s:%d\n", ip, ListenPort)
+			log.Printf("iDig can connect to this server at: http://%s:%d", ip, ListenPort)
 		} else {
-			log.Printf("iDig can connect to this server at: http://%s\n", ip)
+			log.Printf("iDig can connect to this server at: http://%s", ip)
 		}
 		log.Fatal(s.ListenAndServe())
 	}
