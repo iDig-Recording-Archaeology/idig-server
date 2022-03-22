@@ -108,10 +108,7 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 
 		oldPrefs, _ := b.ReadPreferencesAtVersion(req.Head)
 		newPrefs, err := b.ReadPreferences()
-		if err != nil {
-			return err
-		}
-		if bytes.Compare(oldPrefs, newPrefs) != 0 {
+		if err == nil && bytes.Compare(oldPrefs, newPrefs) != 0 {
 			resp.Preferences = newPrefs
 		}
 
