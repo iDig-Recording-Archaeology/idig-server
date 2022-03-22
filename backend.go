@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,7 @@ func NewBackend(root, user, trench string) (*Backend, error) {
 }
 
 func (b *Backend) ExistsAttachment(name, checksum string) bool {
-	refName := fmt.Sprintf("refs/attachments/%s/%s", name, checksum)
+	refName := b.attachmentReference(name, checksum)
 	_, err := b.r.Reference(plumbing.ReferenceName(refName), false)
 	return err == nil
 }
@@ -72,7 +73,7 @@ func (b *Backend) ListVersions() ([]TrenchVersion, error) {
 }
 
 func (b *Backend) ReadAttachment(name, checksum string) ([]byte, error) {
-	refName := fmt.Sprintf("refs/attachments/%s/%s", name, checksum)
+	refName := b.attachmentReference(name, checksum)
 	ref, err := b.r.Reference(plumbing.ReferenceName(refName), false)
 	if err != nil {
 		return nil, fmt.Errorf("Attachment '%s' not found: %w", name, err)
@@ -211,7 +212,7 @@ func (b *Backend) WriteAttachment(name, checksum string, data []byte) error {
 		return err
 	}
 
-	refName := fmt.Sprintf("refs/attachments/%s/%s", name, checksum)
+	refName := b.attachmentReference(name, checksum)
 	ref := plumbing.NewReferenceFromStrings(refName, h.String())
 	err = b.r.Storer.SetReference(ref)
 	if err != nil {
@@ -245,7 +246,7 @@ func (b *Backend) WriteTrench(device, message string, preferences []byte, survey
 		surveyEntries = append(surveyEntries, e)
 
 		for _, a := range survey.Attachments() {
-			refName := fmt.Sprintf("refs/attachments/%s/%s", a.Name, a.Checksum)
+			refName := b.attachmentReference(a.Name, a.Checksum)
 			ref, err := b.r.Reference(plumbing.ReferenceName(refName), false)
 			if err != nil {
 				return "", err
@@ -297,6 +298,12 @@ func (b *Backend) WriteTrench(device, message string, preferences []byte, survey
 		return "", err
 	}
 	return commit.String(), nil
+}
+
+func (b *Backend) attachmentReference(name, checksum string) string {
+	enc := base64.URLEncoding.WithPadding(base64.NoPadding)
+	h := enc.EncodeToString([]byte(fmt.Sprintf("%s/%s", name, checksum)))
+	return fmt.Sprintf("refs/attachments/%s", h)
 }
 
 func (b *Backend) addBlob(data []byte) (plumbing.Hash, error) {
