@@ -330,8 +330,8 @@ func (b *Backend) addBlob(data []byte) (plumbing.Hash, error) {
 
 func (b *Backend) addCommit(user, device, message string, tree plumbing.Hash, parents []plumbing.Hash) (plumbing.Hash, error) {
 	author := object.Signature{
-		Name:  user,
-		Email: device,
+		Name:  device,
+		Email: user,
 		When:  time.Now(),
 	}
 	commit := object.Commit{
