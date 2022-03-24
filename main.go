@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "embed"
 
@@ -382,30 +383,29 @@ func main() {
 	addRoute(r, "GET", "/idig/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
 	addRoute(r, "GET", "/idig/{trench}/versions", ListVersions)
 
+	srv := &http.Server{
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+		Handler:      r,
+	}
+
 	if HostName != "" {
-		addr := fmt.Sprintf("%s:443", ListenAddr)
 		m := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			Cache:      autocert.DirCache(filepath.Join(RootDir, "certs")),
 			HostPolicy: autocert.HostWhitelist(HostName),
 			Email:      ContactEmail,
 		}
-		s := &http.Server{
-			Addr:      addr,
-			Handler:   r,
-			TLSConfig: m.TLSConfig(),
-		}
+		srv.Addr = fmt.Sprintf("%s:443", ListenAddr)
+		srv.TLSConfig = m.TLSConfig()
 
 		// Listen on port 80 for HTTPS challenge responses, otherwise redirect to HTTPS
 		go http.ListenAndServe(":80", m.HTTPHandler(nil))
 		log.Printf("iDig can connect to this server at: https://%s\n", HostName)
-		log.Fatal(s.ListenAndServeTLS("", ""))
+		log.Fatal(srv.ListenAndServeTLS("", ""))
 	} else {
-		addr := fmt.Sprintf("%s:%d", ListenAddr, ListenPort)
-		s := &http.Server{
-			Addr:    addr,
-			Handler: r,
-		}
+		srv.Addr = fmt.Sprintf("%s:%d", ListenAddr, ListenPort)
 
 		ip := ListenAddr
 		if ip == "0.0.0.0" {
@@ -419,6 +419,6 @@ func main() {
 		} else {
 			log.Printf("iDig can connect to this server at: http://%s", ip)
 		}
-		log.Fatal(s.ListenAndServe())
+		log.Fatal(srv.ListenAndServe())
 	}
 }
