@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "embed"
@@ -19,21 +21,16 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
-// Global state
+// Global state controlled by CLI flags
 var (
-	// Controlled by flags
+	CertsDir     string
 	ContactEmail string
 	HostName     string
 	ListenAddr   string
 	ListenAll    bool
 	ListenPort   int
 	RootDir      string
-
-	Users *UserDB
 )
-
-//go:embed "users.DEFAULT"
-var defaultUsers []byte
 
 type SyncRequest struct {
 	Device      string   `json:"device"`      // Device name making the request
@@ -288,31 +285,37 @@ type ServerHandler func(http.ResponseWriter, *http.Request, *Backend) error
 func addRoute(r *mux.Router, method, path string, handler ServerHandler) {
 	// Wrapper function to turn handler into http.HandleFunc compatible form
 	h := func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL)
-
-		user, password, ok := r.BasicAuth()
-		if !ok {
-			msg := "Missing authorization header"
-			log.Println(msg)
-			http.Error(w, msg, http.StatusUnauthorized)
-			return
-		}
-		if !Users.HasAccess(user, password) {
-			msg := "Invalid username or password"
-			log.Println(msg)
-			http.Error(w, msg, http.StatusUnauthorized)
-			return
+		httpError := func(msg string, code int) {
+			log.Printf("%s %s [%d %s]", r.Method, r.URL, code, msg)
+			http.Error(w, msg, code)
 		}
 
 		vars := mux.Vars(r)
+		project := vars["project"]
+		if project == "" {
+			httpError("Missing project", http.StatusNotFound)
+			return
+		}
 		trench := vars["trench"]
 		if trench == "" {
-			http.Error(w, "Missing trench", http.StatusNotFound)
+			httpError("Missing trench", http.StatusNotFound)
 			return
 		}
 
-		trenchesDir := filepath.Join(RootDir, "trenches")
-		b, err := NewBackend(trenchesDir, user, trench)
+		user, password, ok := r.BasicAuth()
+		if !ok {
+			httpError("Missing authorization header", http.StatusUnauthorized)
+			return
+		}
+		if !hasAccess(project, user, password) {
+			httpError("Invalid username or password", http.StatusUnauthorized)
+			return
+		}
+
+		log.Printf("%s %s (%s)", r.Method, r.URL, user)
+
+		projectDir := filepath.Join(RootDir, project)
+		b, err := NewBackend(projectDir, user, trench)
 		if err != nil {
 			msg := fmt.Sprintf("Error initializing backend for %s: %s", trench, err)
 			log.Println(msg)
@@ -330,10 +333,35 @@ func addRoute(r *mux.Router, method, path string, handler ServerHandler) {
 	r.HandleFunc(path, h).Methods(method)
 }
 
+// Check if a user has acess to a project
+func hasAccess(project, user, password string) bool {
+	usersFile := filepath.Join(RootDir, project, "users.txt")
+	f, err := os.Open(usersFile)
+	if err != nil {
+		log.Printf("Can't open users file: %s", usersFile)
+		return false
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		u, p := Cut(line, ":")
+		if u == user {
+			return p == password
+		}
+	}
+	return false
+}
+
 func init() {
 	flag.StringVar(&ListenAddr, "A", "", "Address to listen on")
 	flag.BoolVar(&ListenAll, "a", false, "Listen on all addresses")
-	flag.StringVar(&ContactEmail, "e", "", "Contact email for certificate registration")
+	flag.StringVar(&ContactEmail, "contact-email", "", "Contact email for certificate registration")
+	flag.StringVar(&CertsDir, "certs-dir", "", "Directory to store certificate information when using TLS")
 	flag.IntVar(&ListenPort, "p", 0, "Port to listen on")
 	flag.StringVar(&RootDir, "r", ".", "Root dir of Git repositories")
 	flag.StringVar(&HostName, "s", "", "Serve TLS with auto-generated certificate for this hostname")
@@ -341,21 +369,6 @@ func init() {
 
 func main() {
 	flag.Parse()
-
-	usersFile := filepath.Join(RootDir, "users")
-	if _, err := os.Stat(usersFile); os.IsNotExist(err) {
-		err := os.WriteFile(usersFile, defaultUsers, 0o644)
-		if err != nil {
-			log.Fatalf("Could not create default users file: %s", err)
-		}
-		usersPath, err := filepath.Abs(usersFile)
-		if err != nil {
-			usersPath = usersFile
-		}
-		log.Printf("Created users file at: %s", usersPath)
-		log.Printf("Default username: idig")
-		log.Printf("Default password: idig")
-	}
 
 	if ListenAddr == "" && ListenPort == 0 && ListenAll == false && HostName == "" {
 		// No arguments were given, use default values
@@ -368,20 +381,23 @@ func main() {
 		// If neither of -A, -a or -s were given, then listen on localhost only
 		ListenAddr = "127.0.0.1"
 	}
-
-	var err error
-	Users, err = NewUserDB(usersFile)
-	if err != nil {
-		log.Fatal(err)
+	if CertsDir == "" {
+		CertsDir = filepath.Join(RootDir, "certs")
 	}
-	r := mux.NewRouter()
 
-	addRoute(r, "POST", "/idig/{trench}", SyncTrench)
-	addRoute(r, "GET", "/idig/{trench}/attachments/{name}", ReadAttachment)
-	addRoute(r, "PUT", "/idig/{trench}/attachments/{name}", WriteAttachment)
-	addRoute(r, "GET", "/idig/{trench}/surveys", ReadSurveys)
-	addRoute(r, "GET", "/idig/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
-	addRoute(r, "GET", "/idig/{trench}/versions", ListVersions)
+	r := mux.NewRouter()
+	addRoute(r, "POST", "/idig/{project}/{trench}", SyncTrench)
+	addRoute(r, "GET", "/idig/{project}/{trench}/attachments/{name}", ReadAttachment)
+	addRoute(r, "PUT", "/idig/{project}/{trench}/attachments/{name}", WriteAttachment)
+	addRoute(r, "GET", "/idig/{project}/{trench}/surveys", ReadSurveys)
+	addRoute(r, "GET", "/idig/{project}/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
+	addRoute(r, "GET", "/idig/{project}/{trench}/versions", ListVersions)
+
+	// Fallback
+	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s [404 Not Found]", r.Method, r.URL)
+		http.Error(w, "Not Found", http.StatusNotFound)
+	})
 
 	srv := &http.Server{
 		ReadTimeout:  10 * time.Second,
@@ -393,7 +409,7 @@ func main() {
 	if HostName != "" {
 		m := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
-			Cache:      autocert.DirCache(filepath.Join(RootDir, "certs")),
+			Cache:      autocert.DirCache(CertsDir),
 			HostPolicy: autocert.HostWhitelist(HostName),
 			Email:      ContactEmail,
 		}
