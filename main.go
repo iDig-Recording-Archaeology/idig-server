@@ -46,7 +46,7 @@ type SyncRequest struct {
 }
 
 type SyncResponse struct {
-	Status      string   `json:"status"`                // One of: ok, pushed, missing, conflict
+	Status      string   `json:"status"`                // One of: ok, pushed, missing, pull
 	Version     string   `json:"version"`               // Current version of the server
 	Preferences []byte   `json:"preferences,omitempty"` // Serialized preferences if different
 	Missing     []string `json:"missing,omitempty"`     // List of missing attachments
@@ -55,10 +55,10 @@ type SyncResponse struct {
 
 // Sync Status
 const (
-	StatusOK       = "ok"       // Client is already in sync
-	StatusPushed   = "pushed"   // New version committed
-	StatusConflict = "conflict" // Client is in an older version
-	StatusMissing  = "missing"  // Some attachments are missing and need to be uploaded first
+	StatusOK      = "ok"      // Client is already in sync
+	StatusPushed  = "pushed"  // New version committed
+	StatusPull    = "pull"    // Client is in an older version and needs to update
+	StatusMissing = "missing" // Some attachments are missing and need to be uploaded first
 )
 
 type Patch struct {
@@ -104,7 +104,7 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 		}
 
 		resp := SyncResponse{
-			Status:  StatusConflict,
+			Status:  StatusPull,
 			Version: head,
 			Updates: patches,
 		}
