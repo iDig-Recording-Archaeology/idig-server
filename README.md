@@ -12,26 +12,55 @@ go build
 Use ```-r /path/to/root``` to pass the root directory of the server. This is place where
 all the trench data and other configuration are beeing stored.
 
-## Users
+## Configuration
 
-When you run the server the first time it will create a users file with the default username ```idig``` and password ```idig```.
-You can change this and add more users by editing the ```users``` file inside the Root Directory.
+### Create a new Project
+
+The name of the *Project* must match the `project` field in your `Preferences.json` file in iDig.
+
+Each *Project* can contain multiple trenches and has its own list of users.
+
+```
+idig-server create Agora
+```
+
+### Add one or more users to the *Project*
+
+```
+idig-server adduser Agora bruce myPassw0rd
+```
+
+### See the list of users
+
+```
+idig-server listusers Agora
+```
+
+### Delete a user
+
+```
+idig-server deluser Agora bruce
+```
 
 ## Running iDig Server
+
+```
+idig-server start
+```
 
 By default, iDig Server will start an HTTP server on port 9000. This mode is insecure, as all data are sent unencrypted.
 If you are planning to expose the server on the Internet, please use one of the following methods:
 
-### With auto-generated certificates from Let's Encrypt
+### With auto-generated certificates from *Let's Encrypt*
 
 iDig Server can use HTTPS with auto-generated TLS certificates. For this you'll need a valid domain name that resolves
 to the IP address of the server. Then you can run:
 
 ```
-idig-server -s example.com -e admin@example.com
+idig-server start --tls example.com --contact-email admin@example.com
 ```
 
-The email is optional but is advised to use it, so that Let's Encrypt can reach you in case of any problems with the certificate.
+The email is optional but is advised to use it, so that *Let's Encrypt* can reach you in case of any problems with the certificate.
 
 ### Behind a Reverse Proxy
 
@@ -39,8 +68,5 @@ If you already run an HTTPS web server, then you can run iDig server behind a re
 listen for localhost connections. e.g.:
 
 ```
-idig-server -p 4000
+idig-server start -p 4000
 ```
-
-All the API endpoints are under the /idig/ path, to facilitate this use case.
-
