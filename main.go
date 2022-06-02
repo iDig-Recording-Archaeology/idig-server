@@ -17,6 +17,7 @@ import (
 
 	_ "embed"
 
+	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -446,11 +447,15 @@ func startCmd(args []string) {
 		http.Error(w, "Not Found", http.StatusNotFound)
 	})
 
+	rr := handlers.CORS(
+		handlers.AllowedHeaders([]string{"Authorization"}),
+	)(r)
+
 	srv := &http.Server{
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
-		Handler:      r,
+		Handler:      rr,
 	}
 
 	if HostName != "" {
