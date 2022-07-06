@@ -459,8 +459,8 @@ func startCmd(args []string) {
 	)(r)
 
 	srv := &http.Server{
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 		Handler:      rr,
 	}
