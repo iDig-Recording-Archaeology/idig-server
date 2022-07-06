@@ -209,14 +209,14 @@ func (b *Backend) ReadAllSurveyVersions(id string) ([]SurveyVersion, error) {
 func (b *Backend) WriteAttachment(name, checksum string, data []byte) error {
 	h, err := b.addBlob(data)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to write git blob: %w", err)
 	}
 
 	refName := b.attachmentReference(name, checksum)
 	ref := plumbing.NewReferenceFromStrings(refName, h.String())
 	err = b.r.Storer.SetReference(ref)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to create attachment reference: %w", err)
 	}
 
 	return nil
@@ -313,13 +313,13 @@ func (b *Backend) addBlob(data []byte) (plumbing.Hash, error) {
 
 	w, err := obj.Writer()
 	if err != nil {
-		return plumbing.ZeroHash, err
+		return plumbing.ZeroHash, fmt.Errorf("Failed to get object writer: %w", err)
 	}
 	defer w.Close()
 
 	n, err := w.Write(data)
 	if err != nil {
-		return plumbing.ZeroHash, err
+		return plumbing.ZeroHash, fmt.Errorf("Failed to write blob data: %w", err)
 	}
 	if n != len(data) {
 		return plumbing.ZeroHash, fmt.Errorf("Error writing blob data")

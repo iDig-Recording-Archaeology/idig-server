@@ -208,7 +208,7 @@ func WriteAttachment(w http.ResponseWriter, r *http.Request, b *Backend) error {
 
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("Error reading attachment: %w", err)
 	}
 	return b.WriteAttachment(name, checksum, data)
 }
