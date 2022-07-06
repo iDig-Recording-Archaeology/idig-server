@@ -31,6 +31,7 @@ var (
 	ListenAll    bool
 	ListenPort   int
 	RootDir      string
+	Verbose      bool
 )
 
 const UsersTxtHeader = `# Lines starting with # are ignored
@@ -373,12 +374,14 @@ func startCmd(args []string) {
 	fs.StringVar(&HostName, "tls", "", "")
 	fs.StringVar(&ContactEmail, "contact-email", "", "")
 	fs.StringVar(&CertsDir, "certs-dir", "", "")
+	fs.BoolVar(&Verbose, "v", false, "")
 	fs.Usage = func() {
 		stderr.Println("Usage: idig-server run")
 		stderr.Println("  -r DIR   Root directory (default: current directory)")
 		stderr.Println("  -p PORT  Port to listen on (default: 9000)")
 		stderr.Println("  -A ADDR  Address to listen on (default: localhost)")
 		stderr.Println("  -a       Listen on all addresses")
+		stderr.Println("  -v       Enable verbose logging")
 		stderr.Println()
 		stderr.Println("To enable TLS use:")
 		stderr.Println("  --tls HOST             Serve TLS with auto-generated certificate for this hostname")
@@ -386,6 +389,10 @@ func startCmd(args []string) {
 		stderr.Println("  --certs-dir DIR        Directory to store certificate information")
 	}
 	fs.Parse(args)
+
+	if Verbose {
+		log.SetFlags(log.Lshortfile)
+	}
 
 	// Check if there is at least one Project in RootDir
 	entries, err := os.ReadDir(RootDir)
@@ -492,7 +499,6 @@ func startCmd(args []string) {
 }
 
 func createCmd(args []string) {
-	log.SetFlags(0)
 	fs := flag.NewFlagSet("create", flag.ExitOnError)
 	fs.StringVar(&RootDir, "r", ".", "Root directory")
 	fs.Usage = func() {
@@ -524,7 +530,6 @@ func createCmd(args []string) {
 }
 
 func addUserCmd(args []string) {
-	log.SetFlags(0)
 	fs := flag.NewFlagSet("addUser", flag.ExitOnError)
 	fs.StringVar(&RootDir, "r", ".", "Root directory")
 	fs.Usage = func() {
@@ -596,7 +601,6 @@ func addUserCmd(args []string) {
 }
 
 func delUserCmd(args []string) {
-	log.SetFlags(0)
 	fs := flag.NewFlagSet("delUser", flag.ExitOnError)
 	fs.StringVar(&RootDir, "r", ".", "Root directory")
 	fs.Usage = func() {
@@ -646,7 +650,6 @@ func delUserCmd(args []string) {
 }
 
 func listUsersCmd(args []string) {
-	log.SetFlags(0)
 	fs := flag.NewFlagSet("listUsers", flag.ExitOnError)
 	fs.StringVar(&RootDir, "r", ".", "Root directory")
 	fs.Usage = func() {
@@ -689,6 +692,8 @@ func usage() {
 }
 
 func main() {
+	log.SetFlags(0)
+
 	if len(os.Args) < 2 {
 		usage()
 	}
