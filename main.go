@@ -209,7 +209,7 @@ func WriteAttachment(w http.ResponseWriter, r *http.Request, b *Backend) error {
 
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		return fmt.Errorf("Error reading attachment: %w", err)
+		return fmt.Errorf("Error uploading attachment %s/%s (%s): %w", b.Trench, name, b.User, err)
 	}
 	return b.WriteAttachment(name, checksum, data)
 }
@@ -274,7 +274,11 @@ func (r SyncRequest) String() string {
 }
 
 func (r SyncResponse) String() string {
-	s := fmt.Sprintf("{status: %s, version: %s", r.Status, Prefix(r.Version, 7))
+	version := Prefix(r.Version, 7)
+	if version == "" {
+		version = "-"
+	}
+	s := fmt.Sprintf("{status: %s, version: %s", r.Status, version)
 	if len(r.Missing) > 0 {
 		s += fmt.Sprintf(", missing: [%d attachments]", len(r.Missing))
 	}
