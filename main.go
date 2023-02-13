@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Global state controlled by CLI flags
@@ -361,8 +362,9 @@ func hasAccess(project, user, password string) bool {
 			continue
 		}
 		u, p := Cut(line, ":")
+		match := CheckPasswordHash(password, p)
 		if u == user {
-			return p == password
+			return match == true
 		}
 	}
 	return false
@@ -546,6 +548,8 @@ func addUserCmd(args []string) {
 	project := fs.Arg(0)
 	user := fs.Arg(1)
 	password := fs.Arg(2)
+	hashed, _ := HashPassword(password)
+
 	if project == "" || user == "" || password == "" {
 		fs.Usage()
 		os.Exit(1)
@@ -569,18 +573,22 @@ func addUserCmd(args []string) {
 
 	var out []string
 	exists := false
+
 	for _, line := range lines {
 		if strings.HasPrefix(line, "#") {
 			out = append(out, line)
 			continue
 		}
 		u, p := Cut(line, ":")
+
+		match := CheckPasswordHash(password, p)
+
 		if u == user {
 			exists = true
-			if p == password {
+			if match == true {
 				log.Fatalf("User '%s' already exists with this password", user)
 			} else {
-				out = append(out, fmt.Sprintf("%s:%s", user, password))
+				out = append(out, fmt.Sprintf("%s:%s", user, hashed))
 			}
 		} else {
 			out = append(out, line)
@@ -588,7 +596,7 @@ func addUserCmd(args []string) {
 	}
 
 	if !exists {
-		out = append(out, fmt.Sprintf("%s:%s", user, password))
+		out = append(out, fmt.Sprintf("%s:%s", user, hashed))
 	}
 
 	data := []byte(strings.Join(out, "\n") + "\n")
@@ -601,6 +609,16 @@ func addUserCmd(args []string) {
 	} else {
 		log.Printf("Added user '%s'", user)
 	}
+}
+
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func CheckPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
 }
 
 func delUserCmd(args []string) {
