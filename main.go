@@ -362,9 +362,9 @@ func hasAccess(project, user, password string) bool {
 			continue
 		}
 		u, p := Cut(line, ":")
-		match := CheckPasswordHash(password, p)
+
 		if u == user {
-			return match == true
+			return CheckPasswordHash(password, p)
 		}
 	}
 	return false
@@ -581,11 +581,9 @@ func addUserCmd(args []string) {
 		}
 		u, p := Cut(line, ":")
 
-		match := CheckPasswordHash(password, p)
-
 		if u == user {
 			exists = true
-			if match == true {
+			if CheckPasswordHash(password, p) {
 				log.Fatalf("User '%s' already exists with this password", user)
 			} else {
 				out = append(out, fmt.Sprintf("%s:%s", user, hashed))
@@ -697,8 +695,8 @@ func listUsersCmd(args []string) {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		u, p := Cut(line, ":")
-		log.Printf("%-12s %s", u, p)
+		u := strings.Split(line, ":")[0]
+		log.Printf("%s", u)
 	}
 }
 
