@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"path/filepath"
 	"sort"
@@ -70,6 +71,21 @@ func (b *Backend) ListVersions() ([]TrenchVersion, error) {
 		return nil, fmt.Errorf("Error getting version list: %w", err)
 	}
 	return versions, nil
+}
+
+func (b *Backend) ListTrenches(project string) ([]string, error) {
+	var a []string
+	files, err := ioutil.ReadDir(project)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, f := range files {
+		if f.IsDir() {
+			fmt.Println(f.Name())
+			a = append(a, f.Name())
+		}
+	}
+	return a, nil
 }
 
 func (b *Backend) ReadAttachment(name, checksum string) ([]byte, error) {

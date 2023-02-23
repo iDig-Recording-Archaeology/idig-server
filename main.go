@@ -255,6 +255,16 @@ func ListVersions(w http.ResponseWriter, r *http.Request, b *Backend) error {
 	return writeJSON(w, r, versions)
 }
 
+func ListTrenches(w http.ResponseWriter, r *http.Request, b *Backend) error {
+	vars := mux.Vars(r)
+	project := vars["project"]
+	trenches, err := b.ListTrenches(project)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, r, trenches)
+}
+
 func writeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -309,7 +319,7 @@ func addRoute(r *mux.Router, method, path string, handler ServerHandler) {
 			return
 		}
 		trench := vars["trench"]
-		if trench == "" {
+		if trench == "" && method != "GET" {
 			httpError("Missing trench", http.StatusNotFound)
 			return
 		}
@@ -453,6 +463,7 @@ func startCmd(args []string) {
 	addRoute(r, "GET", "/idig/{project}/{trench}/surveys", ReadSurveys)
 	addRoute(r, "GET", "/idig/{project}/{trench}/surveys/{uuid}/versions", ReadSurveyVersions)
 	addRoute(r, "GET", "/idig/{project}/{trench}/versions", ListVersions)
+	addRoute(r, "GET", "/idig/{project}/trenches", ListTrenches)
 
 	// Fallback
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
