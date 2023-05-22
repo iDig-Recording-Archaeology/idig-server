@@ -6,7 +6,8 @@ import (
 	"net"
 	"os"
 	"sort"
-	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func FileExists(name string) bool {
@@ -45,13 +46,6 @@ func GetOutboundIP() (net.IP, error) {
 		return nil, fmt.Errorf("Could not get outbound IP")
 	}
 	return addr.IP, nil
-}
-
-func Cut(s, sep string) (before, after string) {
-	if i := strings.Index(s, sep); i >= 0 {
-		return s[:i], s[i+len(sep):]
-	}
-	return s, ""
 }
 
 func Prefix(s string, n int) string {
@@ -94,4 +88,14 @@ func (s Set) Union(a Set) Set {
 		u[k] = struct{}{}
 	}
 	return u
+}
+
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func CheckPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
 }

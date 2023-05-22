@@ -25,7 +25,7 @@ func NewUserDB(passwdFile string) (*UserDB, error) {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		u, p := Cut(line, ":")
+		u, p, _ := strings.Cut(line, ":")
 		db[u] = p
 	}
 	return &UserDB{db: db}, sc.Err()

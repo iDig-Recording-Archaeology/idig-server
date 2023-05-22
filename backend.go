@@ -515,7 +515,7 @@ func (s Survey) Attachments() []Attachment {
 	for _, a := range strings.Split(s["RelationAttachments"], "\n\n") {
 		var name, ts string
 		for _, s := range strings.Split(a, "\n") {
-			key, val := Cut(s, "=")
+			key, val, _ := strings.Cut(s, "=")
 			if key == "n" {
 				name = val
 			} else if key == "d" {
