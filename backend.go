@@ -16,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/memory"
 )
 
 type Backend struct {
@@ -32,6 +33,20 @@ func NewBackend(root, user, trench string) (*Backend, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("Failed to open repository for '%s': %w", trench, err)
+	}
+	b := &Backend{
+		User:   user,
+		Trench: trench,
+		r:      r,
+	}
+	return b, nil
+}
+
+func NewMemoryBackend(user, trench string) (*Backend, error) {
+	storage := memory.NewStorage()
+	r, err := git.Init(storage, nil)
+	if err != nil {
+		return nil, err
 	}
 	b := &Backend{
 		User:   user,
