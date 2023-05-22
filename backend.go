@@ -67,6 +67,22 @@ type TrenchVersion struct {
 	Date    time.Time `json:"date"`
 }
 
+func (b *Backend) Version() (TrenchVersion, error) {
+	head, err := b.r.Head()
+	if err != nil {
+		return TrenchVersion{}, err
+	}
+	c, err := b.r.CommitObject(head.Hash())
+	if err != nil {
+		return TrenchVersion{}, err
+	}
+	version := TrenchVersion{
+		Version: c.Hash.String(),
+		Date:    c.Author.When,
+	}
+	return version, nil
+}
+
 func (b *Backend) ListVersions() ([]TrenchVersion, error) {
 	var versions []TrenchVersion
 	it, err := b.r.Log(&git.LogOptions{})

@@ -40,6 +40,70 @@ const UsersTxtHeader = `# Lines starting with # are ignored
 #   USER:PASSWORD
 `
 
+type ListTrenchesResponse struct {
+	Trenches []Trench `json:"trenches"`
+}
+
+type Trench struct {
+	Name         string    `json:"name"`
+	Version      string    `json:"version"`
+	LastModified time.Time `json:"last_modified"`
+}
+
+func ListTrenches(w http.ResponseWriter, r *http.Request) {
+	httpError := func(msg string, code int) {
+		log.Printf("%s %s [%d %s]", r.Method, r.URL, code, msg)
+		http.Error(w, msg, code)
+	}
+
+	vars := mux.Vars(r)
+	project := vars["project"]
+	if project == "" {
+		httpError("Missing project", http.StatusNotFound)
+		return
+	}
+
+	user, password, ok := r.BasicAuth()
+	if !ok {
+		httpError("Missing authorization header", http.StatusUnauthorized)
+		return
+	}
+	if !hasAccess(project, user, password) {
+		httpError("Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("%s %s (%s)", r.Method, r.URL, user)
+
+	projectDir := filepath.Join(RootDir, project)
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		httpError("Failed to list trenches", http.StatusInternalServerError)
+		return
+	}
+
+	trenches := []Trench{}
+	for _, e := range entries {
+		b, err := NewBackend(projectDir, user, e.Name())
+		if err != nil {
+			continue
+		}
+		v, err := b.Version()
+		if err != nil {
+			log.Printf("Error getting version of %s", e.Name())
+			continue
+		}
+		trench := Trench{
+			Name:         e.Name(),
+			Version:      v.Version,
+			LastModified: v.Date,
+		}
+		trenches = append(trenches, trench)
+	}
+	resp := ListTrenchesResponse{Trenches: trenches}
+	writeJSON(w, r, &resp)
+}
+
 type SyncRequest struct {
 	Device      string   `json:"device"`      // Device name making the request
 	Message     string   `json:"message"`     // Commit message (can be empty)
@@ -447,6 +511,7 @@ func startCmd(args []string) {
 	}
 
 	r := mux.NewRouter()
+	r.HandleFunc("/idig/{project}", ListTrenches).Methods("GET")
 	addRoute(r, "POST", "/idig/{project}/{trench}", SyncTrench)
 	addRoute(r, "GET", "/idig/{project}/{trench}/attachments/{name}", ReadAttachment)
 	addRoute(r, "PUT", "/idig/{project}/{trench}/attachments/{name}", WriteAttachment)
