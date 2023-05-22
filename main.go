@@ -733,6 +733,40 @@ func delUserCmd(args []string) {
 	}
 }
 
+func importCmd(args []string) {
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	fs.StringVar(&RootDir, "r", ".", "Root directory")
+	fs.Usage = func() {
+		log.Println("Usage: idig-server import <PROJECT>/<TRENCH> <PREFERENCES FILE>")
+		log.Println("  -r DIR   Root directory (default: current directory)")
+		log.Println()
+		log.Println("e.g.: idig-server import Agora/BZ /tmp/Preferences.json")
+	}
+	fs.Parse(args)
+
+	project, trench, _ := strings.Cut(fs.Arg(0), "/")
+	preferences := fs.Arg(1)
+	if project == "" || trench == "" || preferences == "" {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	data, err := os.ReadFile(preferences)
+	if err != nil {
+		log.Fatalf("Error reading preferences file: %s", err)
+	}
+
+	projectDir := filepath.Join(RootDir, project)
+	b, err := NewBackend(projectDir, "admin", trench)
+	if err != nil {
+		log.Fatalf("Error opening trench: %s", err)
+	}
+	err = b.WritePreferences(data)
+	if err != nil {
+		log.Fatalf("Error writing preferences file: %s", err)
+	}
+}
+
 func listUsersCmd(args []string) {
 	fs := flag.NewFlagSet("listUsers", flag.ExitOnError)
 	fs.StringVar(&RootDir, "r", ".", "Root directory")
@@ -772,6 +806,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  idig-server adduser    Add a user to a project")
 	fmt.Fprintln(os.Stderr, "  idig-server deluser    Delete a user from a project")
 	fmt.Fprintln(os.Stderr, "  idig-server listusers  List all users in a project")
+	fmt.Fprintln(os.Stderr, "  idig-server import     Import a Preferences file")
 	os.Exit(1)
 }
 
@@ -790,6 +825,8 @@ func main() {
 		createCmd(args)
 	case "deluser":
 		delUserCmd(args)
+	case "import":
+		importCmd(args)
 	case "listusers":
 		listUsersCmd(args)
 	case "start":

@@ -253,6 +253,64 @@ func (b *Backend) WriteAttachment(name, checksum string, data []byte) error {
 	return nil
 }
 
+func (b *Backend) WritePreferences(preferences []byte) error {
+	rootEntries := []object.TreeEntry{}
+
+	var parents []plumbing.Hash
+
+	// If we have a parent, copy attachments and surveys from it
+	if head, err := b.r.Head(); err == nil {
+		c, err := b.r.CommitObject(head.Hash())
+		if err != nil {
+			return err
+		}
+		parents = append(parents, c.Hash)
+
+		rootTree, err := b.r.TreeObject(c.TreeHash)
+		if err != nil {
+			return err
+		}
+
+		attachmentsTree, err := rootTree.FindEntry("attachments")
+		if err != nil {
+			return err
+		}
+		rootEntries = append(rootEntries, *attachmentsTree)
+
+		surveysTree, err := rootTree.FindEntry("surveys")
+		if err != nil {
+			return err
+		}
+		rootEntries = append(rootEntries, *surveysTree)
+	}
+
+	preferencesHash, err := b.addBlob(preferences)
+	if err != nil {
+		return fmt.Errorf("Failed to write preferences: %w", err)
+	}
+	preferencesEntry := object.TreeEntry{
+		Name: "Preferences.json",
+		Mode: filemode.Regular,
+		Hash: preferencesHash,
+	}
+	rootEntries = append(rootEntries, preferencesEntry)
+
+	rootTree, err := b.addTree(rootEntries)
+	if err != nil {
+		return err
+	}
+
+	commit, err := b.addCommit(b.User, "terminal", "Import Preferences", rootTree, parents)
+	if err != nil {
+		return err
+	}
+	err = b.updateHEAD(commit)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (b *Backend) WriteTrench(device, message string, preferences []byte, surveys []Survey) (string, error) {
 	var surveyEntries []object.TreeEntry
 	var attachmentEntries []object.TreeEntry

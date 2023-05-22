@@ -91,6 +91,31 @@ func TestTrench(t *testing.T) {
 	assertEqualSurveys(t, surveys, surveysAtHead)
 }
 
+func TestWritePreferences(t *testing.T) {
+	b, err := NewMemoryBackend("test-user", "test-trench")
+	assertNoError(t, err)
+
+	surveys := generateSurveys(10)
+	_, err = b.WriteTrench("test-dev", "", []byte("prefs-1"), surveys)
+	assertNoError(t, err)
+
+	preferences, err := b.ReadPreferences()
+	assertNoError(t, err)
+	assertEqual(t, string(preferences), "prefs-1")
+
+	err = b.WritePreferences([]byte("prefs-2"))
+	assertNoError(t, err)
+
+	preferences, err = b.ReadPreferences()
+	assertNoError(t, err)
+	assertEqual(t, string(preferences), "prefs-2")
+
+	// Make sure surveys were not affected
+	surveysAtHead, err := b.ReadSurveys()
+	assertNoError(t, err)
+	assertEqualSurveys(t, surveys, surveysAtHead)
+}
+
 func assertNoError(t *testing.T, err error) {
 	if err != nil {
 		t.Error(err)
