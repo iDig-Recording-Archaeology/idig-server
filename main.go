@@ -135,6 +135,16 @@ func usage() {
 func main() {
 	log.SetFlags(0)
 
+	if val := os.Getenv("IDIG_SERVER_DIR"); val != "" {
+		RootDir = val
+	} else {
+		dir, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatal(err)
+		}
+		RootDir = dir
+	}
+
 	if len(os.Args) < 2 {
 		usage()
 	}

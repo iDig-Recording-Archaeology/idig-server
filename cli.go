@@ -18,7 +18,6 @@ import (
 func startCmd(args []string) error {
 	stderr := log.New(os.Stderr, "", 0)
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	fs.StringVar(&RootDir, "r", ".", "")
 	fs.IntVar(&ListenPort, "p", 0, "")
 	fs.BoolVar(&ListenAll, "a", false, "")
 	fs.StringVar(&ListenAddr, "A", "", "")
@@ -28,7 +27,6 @@ func startCmd(args []string) error {
 	fs.BoolVar(&Verbose, "v", false, "")
 	fs.Usage = func() {
 		stderr.Println("Usage: idig-server run")
-		stderr.Println("  -r DIR   Root directory (default: current directory)")
 		stderr.Println("  -p PORT  Port to listen on (default: 9000)")
 		stderr.Println("  -A ADDR  Address to listen on (default: localhost)")
 		stderr.Println("  -a       Listen on all addresses")
@@ -152,22 +150,13 @@ func startCmd(args []string) error {
 }
 
 func createCmd(args []string) error {
-	fs := flag.NewFlagSet("create", flag.ExitOnError)
-	fs.StringVar(&RootDir, "r", ".", "Root directory")
-	fs.Usage = func() {
+	if len(args) != 1 {
 		log.Println("Usage: idig-server create <PROJECT>")
-		log.Println("  -r DIR   Root directory (default: current directory)")
-		log.Println()
 		log.Println("e.g.: idig-server create Agora")
-	}
-	fs.Parse(args)
-
-	project := fs.Arg(0)
-	if project == "" {
-		fs.Usage()
 		os.Exit(1)
 	}
 
+	project := args[0]
 	projectDir := filepath.Join(RootDir, project)
 	usersFile := filepath.Join(projectDir, "users.txt")
 	if FileExists(usersFile) {
@@ -186,26 +175,16 @@ func createCmd(args []string) error {
 }
 
 func addUserCmd(args []string) error {
-	fs := flag.NewFlagSet("addUser", flag.ExitOnError)
-	fs.StringVar(&RootDir, "r", ".", "Root directory")
-	fs.Usage = func() {
+	if len(args) != 3 {
 		log.Println("Usage: idig-server adduser <PROJECT> <USER> <PASSWORD>")
-		log.Println("  -r DIR   Root directory (default: current directory)")
-		log.Println()
 		log.Println("e.g.: idig-server adduser Agora bruce password1")
-	}
-	fs.Parse(args)
-
-	project := fs.Arg(0)
-	user := fs.Arg(1)
-	password := fs.Arg(2)
-	hashed, _ := HashPassword(password)
-
-	if project == "" || user == "" || password == "" {
-		fs.Usage()
 		os.Exit(1)
 	}
 
+	project := args[0]
+	user := args[1]
+	password := args[2]
+	hashed, _ := HashPassword(password)
 	projectDir := filepath.Join(RootDir, project)
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		return err
@@ -264,23 +243,14 @@ func addUserCmd(args []string) error {
 }
 
 func delUserCmd(args []string) error {
-	fs := flag.NewFlagSet("delUser", flag.ExitOnError)
-	fs.StringVar(&RootDir, "r", ".", "Root directory")
-	fs.Usage = func() {
+	if len(args) != 2 {
 		log.Println("Usage: idig-server deluser <PROJECT> <USER>")
-		log.Println("  -r DIR   Root directory (default: current directory)")
-		log.Println()
 		log.Println("e.g.: idig-server deluser Agora bruce")
-	}
-	fs.Parse(args)
-
-	project := fs.Arg(0)
-	user := fs.Arg(1)
-	if project == "" || user == "" {
-		fs.Usage()
 		os.Exit(1)
 	}
 
+	project := args[0]
+	user := args[1]
 	usersFile := filepath.Join(RootDir, project, "users.txt")
 	lines, err := ReadLines(usersFile)
 	if err != nil {
@@ -314,23 +284,14 @@ func delUserCmd(args []string) error {
 }
 
 func importCmd(args []string) error {
-	fs := flag.NewFlagSet("import", flag.ExitOnError)
-	fs.StringVar(&RootDir, "r", ".", "Root directory")
-	fs.Usage = func() {
+	if len(args) != 2 {
 		log.Println("Usage: idig-server import <PROJECT>/<TRENCH> <PREFERENCES FILE>")
-		log.Println("  -r DIR   Root directory (default: current directory)")
-		log.Println()
 		log.Println("e.g.: idig-server import Agora/BZ /tmp/Preferences.json")
-	}
-	fs.Parse(args)
-
-	project, trench, _ := strings.Cut(fs.Arg(0), "/")
-	preferences := fs.Arg(1)
-	if project == "" || trench == "" || preferences == "" {
-		fs.Usage()
 		os.Exit(1)
 	}
 
+	project, trench, _ := strings.Cut(args[0], "/")
+	preferences := args[1]
 	data, err := os.ReadFile(preferences)
 	if err != nil {
 		return fmt.Errorf("Error reading preferences file: %s", err)
@@ -349,22 +310,13 @@ func importCmd(args []string) error {
 }
 
 func listUsersCmd(args []string) error {
-	fs := flag.NewFlagSet("listUsers", flag.ExitOnError)
-	fs.StringVar(&RootDir, "r", ".", "Root directory")
-	fs.Usage = func() {
+	if len(args) != 1 {
 		log.Println("Usage: idig-server listusers <PROJECT>")
-		log.Println("  -r DIR   Root directory (default: current directory)")
-		log.Println()
 		log.Println("e.g.: idig-server listusers Agora")
-	}
-	fs.Parse(args)
-
-	project := fs.Arg(0)
-	if project == "" {
-		fs.Usage()
 		os.Exit(1)
 	}
 
+	project := args[0]
 	usersFile := filepath.Join(RootDir, project, "users.txt")
 	lines, err := ReadLines(usersFile)
 	if err != nil {
