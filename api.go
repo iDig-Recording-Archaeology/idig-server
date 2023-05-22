@@ -20,6 +20,7 @@ type ListTrenchesResponse struct {
 }
 
 type Trench struct {
+	Project      string    `json:"project"`
 	Name         string    `json:"name"`
 	Version      string    `json:"version"`
 	LastModified time.Time `json:"last_modified"`
@@ -31,50 +32,55 @@ func ListTrenches(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, code)
 	}
 
-	vars := mux.Vars(r)
-	project := vars["project"]
-	if project == "" {
-		httpError("Missing project", http.StatusNotFound)
-		return
-	}
-
 	user, password, ok := r.BasicAuth()
 	if !ok {
 		httpError("Missing authorization header", http.StatusUnauthorized)
 		return
 	}
-	if !hasAccess(project, user, password) {
-		httpError("Invalid username or password", http.StatusUnauthorized)
-		return
-	}
 
 	log.Printf("%s %s (%s)", r.Method, r.URL, user)
 
-	projectDir := filepath.Join(RootDir, project)
-	entries, err := os.ReadDir(projectDir)
+	projects, err := os.ReadDir(RootDir)
 	if err != nil {
 		httpError("Failed to list trenches", http.StatusInternalServerError)
 		return
 	}
 
 	trenches := []Trench{}
-	for _, e := range entries {
-		b, err := NewBackend(projectDir, user, e.Name())
-		if err != nil {
+
+	for _, p := range projects {
+		project := p.Name()
+		if !hasAccess(project, user, password) {
 			continue
 		}
-		v, err := b.Version()
+		projectDir := filepath.Join(RootDir, project)
+
+		entries, err := os.ReadDir(projectDir)
 		if err != nil {
-			log.Printf("Error getting version of %s", e.Name())
-			continue
+			httpError("Failed to list trenches", http.StatusInternalServerError)
+			return
 		}
-		trench := Trench{
-			Name:         e.Name(),
-			Version:      v.Version,
-			LastModified: v.Date,
+
+		for _, e := range entries {
+			b, err := NewBackend(projectDir, user, e.Name())
+			if err != nil {
+				continue
+			}
+			v, err := b.Version()
+			if err != nil {
+				log.Printf("Error getting version of %s", e.Name())
+				continue
+			}
+			trench := Trench{
+				Project:      project,
+				Name:         e.Name(),
+				Version:      v.Version,
+				LastModified: v.Date,
+			}
+			trenches = append(trenches, trench)
 		}
-		trenches = append(trenches, trench)
 	}
+
 	resp := ListTrenchesResponse{Trenches: trenches}
 	writeJSON(w, r, &resp)
 }

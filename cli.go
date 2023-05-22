@@ -92,7 +92,7 @@ func startCmd(args []string) error {
 	}
 
 	r := mux.NewRouter()
-	r.HandleFunc("/idig/{project}", ListTrenches).Methods("GET")
+	r.HandleFunc("/idig", ListTrenches).Methods("GET")
 	addRoute(r, "POST", "/idig/{project}/{trench}", SyncTrench)
 	addRoute(r, "GET", "/idig/{project}/{trench}/attachments/{name}", ReadAttachment)
 	addRoute(r, "PUT", "/idig/{project}/{trench}/attachments/{name}", WriteAttachment)
