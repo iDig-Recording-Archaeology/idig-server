@@ -140,10 +140,19 @@ func startCmd(args []string) error {
 			}
 		}
 
+		hostname, _ := os.Hostname()
+
+		log.Print("iDig can connect to this server at:")
 		if ListenPort != 80 {
-			log.Printf("iDig can connect to this server at: http://%s:%d", ip, ListenPort)
+			log.Printf("  http://%s:%d", ip, ListenPort)
+			if hostname != "" {
+				log.Printf("  http://%s:%d", hostname, ListenPort)
+			}
 		} else {
-			log.Printf("iDig can connect to this server at: http://%s", ip)
+			log.Printf("  http://%s", ip)
+			if hostname != "" {
+				log.Printf("  http://%s", hostname)
+			}
 		}
 		return srv.ListenAndServe()
 	}
