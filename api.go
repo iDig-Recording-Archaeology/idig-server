@@ -72,7 +72,7 @@ func (s *Server) HandleTrench(httpMethod, relativePath string, handler TrenchHan
 			return
 		}
 
-		if !userDB.HasReadAccess(user, password) {
+		if !userDB.HasAccess(user, password) {
 			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
@@ -83,6 +83,8 @@ func (s *Server) HandleTrench(httpMethod, relativePath string, handler TrenchHan
 			c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+
+		b.ReadOnly = !userDB.CanWriteTrench(user, trench)
 
 		code, resp := handler(c, b)
 		if resp == nil {
@@ -105,6 +107,7 @@ type Trench struct {
 	Name         string    `json:"name"`
 	Version      string    `json:"version"`
 	LastModified time.Time `json:"last_modified"`
+	ReadOnly     bool      `json:"read_only"`
 }
 
 func (s *Server) ListTrenches(c *gin.Context) (int, any) {
@@ -128,7 +131,7 @@ func (s *Server) ListTrenches(c *gin.Context) (int, any) {
 			continue
 		}
 
-		if !userDB.HasReadAccess(user, password) {
+		if !userDB.HasAccess(user, password) {
 			continue
 		}
 
@@ -138,22 +141,26 @@ func (s *Server) ListTrenches(c *gin.Context) (int, any) {
 		}
 
 		for _, e := range entries {
-			b, err := NewBackend(projectDir, user, e.Name())
+			trench := e.Name()
+			b, err := NewBackend(projectDir, user, trench)
 			if err != nil {
 				continue
 			}
+			b.ReadOnly = !userDB.CanWriteTrench(user, trench)
+
 			v, err := b.Version()
 			if err != nil {
-				log.Printf("Error getting version of %s", e.Name())
+				log.Printf("Error getting version of %s", trench)
 				continue
 			}
-			trench := Trench{
+			t := Trench{
 				Project:      project,
-				Name:         e.Name(),
+				Name:         trench,
 				Version:      v.Version,
 				LastModified: v.Date,
+				ReadOnly:     b.ReadOnly,
 			}
-			trenches = append(trenches, trench)
+			trenches = append(trenches, t)
 		}
 	}
 
@@ -201,10 +208,11 @@ func (r SyncResponse) String() string {
 
 // Sync Status
 const (
-	StatusOK      = "ok"      // Client is already in sync
-	StatusPushed  = "pushed"  // New version committed
-	StatusPull    = "pull"    // Client is in an older version and needs to update
-	StatusMissing = "missing" // Some attachments are missing and need to be uploaded first
+	StatusOK        = "ok"        // Client is already in sync
+	StatusPushed    = "pushed"    // New version committed
+	StatusPull      = "pull"      // Client is in an older version and needs to update
+	StatusMissing   = "missing"   // Some attachments are missing and need to be uploaded first
+	StatusForbidden = "forbidden" // Client does not have write access
 )
 
 type Patch struct {
@@ -227,36 +235,62 @@ func (s *Server) SyncTrench(c *gin.Context, b *Backend) (int, any) {
 	// had synced before and we somehow reset our state, or when they are starting
 	// from scratch.
 	if head != "" && req.Head != head {
-		// Ignore errors here, we just fallback to empty list
-		old, _ := b.ReadSurveysAtVersion(req.Head)
-		new, err := b.ReadSurveys()
+		// Ignore errors here, we just fallback to empty values
+		oldSurveys, _ := b.ReadSurveysAtVersion(req.Head)
+		oldPrefs, _ := b.ReadPreferencesAtVersion(req.Head)
+
+		newSurveys, err := b.ReadSurveys()
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+		newPrefs, err := b.ReadPreferences()
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
 
-		// Generate patches
-		var patches []Patch
-		oldMap := NewSurveyMap(old)
-		newMap := NewSurveyMap(new)
-		for id := range oldMap.IDs().Union(newMap.IDs()) {
-			oldSurvey := oldMap[id]
-			newSurvey := newMap[id]
-			if !oldSurvey.IsEqual(newSurvey) {
-				patch := Patch{Id: id, Old: oldSurvey, New: newSurvey}
-				patches = append(patches, patch)
-			}
+		patches := diffSurveys(oldSurveys, newSurveys)
+		if bytes.Equal(oldPrefs, newPrefs) {
+			newPrefs = nil // Don't send preferences if they haven't changed
 		}
 
 		resp := SyncResponse{
-			Status:  StatusPull,
-			Version: head,
-			Updates: patches,
+			Status:      StatusPull,
+			Version:     head,
+			Updates:     patches,
+			Preferences: newPrefs,
 		}
 
-		oldPrefs, _ := b.ReadPreferencesAtVersion(req.Head)
-		newPrefs, err := b.ReadPreferences()
-		if err == nil && !bytes.Equal(oldPrefs, newPrefs) {
-			resp.Preferences = newPrefs
+		log.Printf("< SYNC %s %s", b.Trench, resp)
+		return http.StatusOK, &resp
+	}
+
+	if b.ReadOnly {
+		surveys, err := b.ReadSurveys()
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+		preferences, err := b.ReadPreferences()
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+
+		patches := diffSurveys(req.Surveys, surveys)
+		if bytes.Equal(req.Preferences, preferences) {
+			preferences = nil // Don't send preferences if they haven't changed
+		}
+
+		var status string
+		if len(patches) == 0 {
+			status = StatusOK
+		} else {
+			status = StatusForbidden
+		}
+
+		resp := SyncResponse{
+			Status:      status,
+			Version:     head,
+			Updates:     patches,
+			Preferences: preferences,
 		}
 
 		log.Printf("< SYNC %s %s", b.Trench, resp)
@@ -297,6 +331,21 @@ func (s *Server) SyncTrench(c *gin.Context, b *Backend) (int, any) {
 	}
 	log.Printf("< SYNC %s %s", b.Trench, resp)
 	return http.StatusOK, &resp
+}
+
+func diffSurveys(old, new []Survey) []Patch {
+	var patches []Patch
+	oldMap := NewSurveyMap(old)
+	newMap := NewSurveyMap(new)
+	for id := range oldMap.IDs().Union(newMap.IDs()) {
+		oldSurvey := oldMap[id]
+		newSurvey := newMap[id]
+		if !oldSurvey.IsEqual(newSurvey) {
+			patch := Patch{Id: id, Old: oldSurvey, New: newSurvey}
+			patches = append(patches, patch)
+		}
+	}
+	return patches
 }
 
 func (s *Server) ReadAttachment(c *gin.Context, b *Backend) (int, any) {

@@ -65,11 +65,26 @@ func NewUserDB(projectDir string) (*UserDB, error) {
 	return &UserDB{db: db}, sc.Err()
 }
 
-func (udb *UserDB) HasReadAccess(user, password string) bool {
+func (udb *UserDB) HasAccess(user, password string) bool {
 	u := udb.db[user]
 	if u == nil {
 		return false
 	}
 	err := bcrypt.CompareHashAndPassword(u.PasswordHash, []byte(password))
 	return err == nil
+}
+
+func (udb *UserDB) CanWriteTrench(user, trench string) bool {
+	u := udb.db[user]
+	if u == nil {
+		return false
+	}
+
+	for _, t := range u.Access {
+		if t == trench || t == "*" {
+			return true
+		}
+	}
+
+	return false
 }

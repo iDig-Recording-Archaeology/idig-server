@@ -20,9 +20,10 @@ import (
 )
 
 type Backend struct {
-	User   string
-	Trench string
-	r      *git.Repository
+	User     string
+	Trench   string
+	ReadOnly bool
+	r        *git.Repository
 }
 
 func NewBackend(root, user, trench string) (*Backend, error) {
@@ -238,6 +239,10 @@ func (b *Backend) ReadAllSurveyVersions(id string) ([]SurveyVersion, error) {
 }
 
 func (b *Backend) WriteAttachment(name, checksum string, data []byte) error {
+	if b.ReadOnly {
+		return fmt.Errorf("Forbidden")
+	}
+
 	h, err := b.addBlob(data)
 	if err != nil {
 		return fmt.Errorf("Failed to write git blob: %w", err)
@@ -254,6 +259,10 @@ func (b *Backend) WriteAttachment(name, checksum string, data []byte) error {
 }
 
 func (b *Backend) WritePreferences(preferences []byte) error {
+	if b.ReadOnly {
+		return fmt.Errorf("Forbidden")
+	}
+
 	rootEntries := []object.TreeEntry{}
 
 	var parents []plumbing.Hash
@@ -312,6 +321,10 @@ func (b *Backend) WritePreferences(preferences []byte) error {
 }
 
 func (b *Backend) WriteTrench(device, message string, preferences []byte, surveys []Survey) (string, error) {
+	if b.ReadOnly {
+		return "", fmt.Errorf("Forbidden")
+	}
+
 	var surveyEntries []object.TreeEntry
 	var attachmentEntries []object.TreeEntry
 
