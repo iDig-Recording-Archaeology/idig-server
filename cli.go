@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const UsersTxtHeader = `# Lines starting with # are ignored`
@@ -274,4 +275,51 @@ func listUsersCmd(rootDir string, args []string) error {
 		log.Printf("%s", u)
 	}
 	return nil
+}
+
+func logCmd(rootDir string, args []string) error {
+	if len(args) != 1 {
+		log.Println("Usage: idig-server log <PROJECT>/<TRENCH>")
+		log.Println("e.g.: idig-server log Agora/BZ")
+		os.Exit(1)
+	}
+
+	project, trench, _ := strings.Cut(args[0], "/")
+	projectDir := filepath.Join(rootDir, project)
+	b, err := NewBackend(projectDir, "admin", trench)
+	if err != nil {
+		return fmt.Errorf("Error opening trench: %s", err)
+	}
+
+	versions, err := b.ListVersions()
+	if err != nil {
+		return err
+	}
+
+	for _, v := range versions {
+		ts := v.Date.Format(time.DateTime)
+		version := Prefix(v.Version, 7)
+		fmt.Printf("%s  %s\n", ts, version)
+	}
+
+	return nil
+}
+
+func rollbackCmd(rootDir string, args []string) error {
+	if len(args) != 2 {
+		log.Println("Usage: idig-server rollback <PROJECT>/<TRENCH> <VERSION>")
+		log.Println("e.g.: idig-server rollback Agora/BZ 48aba5c")
+		os.Exit(1)
+	}
+
+	project, trench, _ := strings.Cut(args[0], "/")
+	version := args[1]
+
+	projectDir := filepath.Join(rootDir, project)
+	b, err := NewBackend(projectDir, "admin", trench)
+	if err != nil {
+		return fmt.Errorf("Error opening trench: %s", err)
+	}
+
+	return b.Rollback(version)
 }

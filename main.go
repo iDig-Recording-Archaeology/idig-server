@@ -30,6 +30,8 @@ var commands = []Command{
 	{"deluser", "Delete a user from a project", delUserCmd},
 	{"listusers", "List all users in a project", listUsersCmd},
 	{"import", "Import a Preferences file", importCmd},
+	{"log", "List versions", logCmd},
+	{"rollback", "Rollback to a previous version", rollbackCmd},
 }
 
 func usage() {

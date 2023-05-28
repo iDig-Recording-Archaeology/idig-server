@@ -265,15 +265,12 @@ func (b *Backend) WritePreferences(preferences []byte) error {
 
 	rootEntries := []object.TreeEntry{}
 
-	var parents []plumbing.Hash
-
 	// If we have a parent, copy attachments and surveys from it
 	if head, err := b.r.Head(); err == nil {
 		c, err := b.r.CommitObject(head.Hash())
 		if err != nil {
 			return err
 		}
-		parents = append(parents, c.Hash)
 
 		rootTree, err := b.r.TreeObject(c.TreeHash)
 		if err != nil {
@@ -309,15 +306,8 @@ func (b *Backend) WritePreferences(preferences []byte) error {
 		return err
 	}
 
-	commit, err := b.addCommit(b.User, "terminal", "Import Preferences", rootTree, parents)
-	if err != nil {
-		return err
-	}
-	err = b.updateHEAD(commit)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err = b.commit(b.User, "terminal", "Import Preferences", rootTree)
+	return err
 }
 
 func (b *Backend) WriteTrench(device, message string, preferences []byte, surveys []Survey) (string, error) {
@@ -377,29 +367,25 @@ func (b *Backend) WriteTrench(device, message string, preferences []byte, survey
 		return "", err
 	}
 
-	var parents []plumbing.Hash
-
-	// Check if our root tree is different than head
-	head, err := b.r.Head()
-	if err == nil {
-		c, err := b.r.CommitObject(head.Hash())
-		if err != nil {
-			return "", err
-		}
-		parents = append(parents, c.Hash)
-		if c.TreeHash == rootTree {
-			return c.Hash.String(), nil
-		}
-	}
-	commit, err := b.addCommit(b.User, device, message, rootTree, parents)
-	if err != nil {
-		return "", err
-	}
-	err = b.updateHEAD(commit)
+	commit, err := b.commit(b.User, device, message, rootTree)
 	if err != nil {
 		return "", err
 	}
 	return commit.String(), nil
+}
+
+func (b *Backend) Rollback(version string) error {
+	commit := b.findCommit(version)
+	if commit == nil {
+		return fmt.Errorf("Invalid version %s", version)
+	}
+	rootTree, err := b.r.TreeObject(commit.TreeHash)
+	if err != nil {
+		return err
+	}
+
+	_, err = b.commit(b.User, "terminal", "Rollback", rootTree.Hash)
+	return err
 }
 
 func (b *Backend) attachmentReference(name, checksum string) string {
@@ -430,7 +416,21 @@ func (b *Backend) addBlob(data []byte) (plumbing.Hash, error) {
 	return b.r.Storer.SetEncodedObject(obj)
 }
 
-func (b *Backend) addCommit(user, device, message string, tree plumbing.Hash, parents []plumbing.Hash) (plumbing.Hash, error) {
+func (b *Backend) commit(user, device, message string, tree plumbing.Hash) (plumbing.Hash, error) {
+	var parents []plumbing.Hash
+
+	if head, err := b.r.Head(); err == nil {
+		c, err := b.r.CommitObject(head.Hash())
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		if c.TreeHash == tree {
+			// We are trying to commit the same tree with HEAD. Just return HEAD.
+			return c.Hash, nil
+		}
+		parents = append(parents, c.Hash)
+	}
+
 	author := object.Signature{
 		Name:  device,
 		Email: user,
@@ -448,7 +448,18 @@ func (b *Backend) addCommit(user, device, message string, tree plumbing.Hash, pa
 	if err != nil {
 		return plumbing.ZeroHash, err
 	}
-	return b.r.Storer.SetEncodedObject(obj)
+
+	h, err := b.r.Storer.SetEncodedObject(obj)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	err = b.updateHEAD(h)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	return h, nil
 }
 
 func (b *Backend) addTree(entries []object.TreeEntry) (plumbing.Hash, error) {
@@ -490,6 +501,34 @@ func (b *Backend) updateHEAD(commit plumbing.Hash) error {
 
 	ref := plumbing.NewHashReference(name, commit)
 	return b.r.Storer.SetReference(ref)
+}
+
+func (b *Backend) findCommit(hash string) *object.Commit {
+	if len(hash) == 40 {
+		// Full hash
+		h := plumbing.NewHash(hash)
+		commit, err := b.r.CommitObject(h)
+		if err != nil {
+			return nil
+		}
+		return commit
+	}
+
+	// This is a short version, iterate all commits to find it
+	it, err := b.r.CommitObjects()
+	if err != nil {
+		return nil
+	}
+
+	for {
+		commit, err := it.Next()
+		if err != nil {
+			return nil
+		}
+		if strings.HasPrefix(commit.Hash.String(), hash) {
+			return commit
+		}
+	}
 }
 
 func (b *Backend) Head() string {
