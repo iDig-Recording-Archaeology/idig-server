@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -12,8 +11,90 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
 )
+
+type Server struct {
+	RootDir string
+
+	r *gin.Engine
+}
+
+func NewServer(rootDir string) *Server {
+	s := &Server{RootDir: rootDir}
+
+	s.r = gin.Default()
+	s.r.Use(cors.Default())
+
+	s.Handle(http.MethodGet, "/idig", s.ListTrenches)
+	s.HandleTrench(http.MethodPost, "/idig/:project/:trench", s.SyncTrench)
+	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/attachments/:name", s.ReadAttachment)
+	s.HandleTrench(http.MethodPut, "/idig/:project/:trench/attachments/:name", s.WriteAttachment)
+	s.HandleTrench(http.MethodGet, "/idig/{project}/{trench}/surveys", s.ReadSurveys)
+	s.HandleTrench(http.MethodGet, "/idig/{project}/{trench}/surveys/{uuid}/versions", s.ReadSurveyVersions)
+	s.HandleTrench(http.MethodGet, "/idig/{project}/{trench}/versions", s.ListVersions)
+	return s
+}
+
+type HandlerFunc func(*gin.Context) (int, any)
+
+func (s *Server) Handle(httpMethod, relativePath string, handler HandlerFunc) gin.IRoutes {
+	h := func(c *gin.Context) {
+		code, resp := handler(c)
+		if resp == nil {
+			c.Status(code)
+		} else if err, ok := resp.(error); ok {
+			c.JSON(code, map[string]string{"error": err.Error()})
+		} else {
+			c.JSON(code, resp)
+		}
+	}
+	return s.r.Handle(httpMethod, relativePath, h)
+}
+
+type TrenchHandlerFunc func(*gin.Context, *Backend) (int, any)
+
+func (s *Server) HandleTrench(httpMethod, relativePath string, handler TrenchHandlerFunc) gin.IRoutes {
+	h := func(c *gin.Context) {
+		user, password, ok := c.Request.BasicAuth()
+		if !ok {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+
+		project := c.Param("project")
+		projectDir := filepath.Join(s.RootDir, project)
+
+		userDB, err := NewUserDB(projectDir)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		if !userDB.HasReadAccess(user, password) {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+
+		trench := c.Param("trench")
+		b, err := NewBackend(projectDir, user, trench)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		code, resp := handler(c, b)
+		if resp == nil {
+			c.Status(code)
+		} else if err, ok := resp.(error); ok {
+			c.JSON(code, map[string]string{"error": err.Error()})
+		} else {
+			c.JSON(code, resp)
+		}
+	}
+	return s.r.Handle(httpMethod, relativePath, h)
+}
 
 type ListTrenchesResponse struct {
 	Trenches []Trench `json:"trenches"`
@@ -26,39 +107,34 @@ type Trench struct {
 	LastModified time.Time `json:"last_modified"`
 }
 
-func ListTrenches(w http.ResponseWriter, r *http.Request) {
-	httpError := func(msg string, code int) {
-		log.Printf("%s %s [%d %s]", r.Method, r.URL, code, msg)
-		http.Error(w, msg, code)
-	}
-
-	user, password, ok := r.BasicAuth()
+func (s *Server) ListTrenches(c *gin.Context) (int, any) {
+	user, password, ok := c.Request.BasicAuth()
 	if !ok {
-		httpError("Missing authorization header", http.StatusUnauthorized)
-		return
+		return http.StatusUnauthorized, nil
 	}
 
-	log.Printf("%s %s (%s)", r.Method, r.URL, user)
-
-	projects, err := os.ReadDir(RootDir)
+	projects, err := os.ReadDir(s.RootDir)
 	if err != nil {
-		httpError("Failed to list trenches", http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, fmt.Errorf("Failed to list trenches")
 	}
 
 	trenches := []Trench{}
 
 	for _, p := range projects {
 		project := p.Name()
-		if !hasAccess(project, user, password) {
+		projectDir := filepath.Join(s.RootDir, project)
+		userDB, err := NewUserDB(projectDir)
+		if err != nil {
 			continue
 		}
-		projectDir := filepath.Join(RootDir, project)
+
+		if !userDB.HasReadAccess(user, password) {
+			continue
+		}
 
 		entries, err := os.ReadDir(projectDir)
 		if err != nil {
-			httpError("Failed to list trenches", http.StatusInternalServerError)
-			return
+			return http.StatusInternalServerError, fmt.Errorf("Failed to list trenches")
 		}
 
 		for _, e := range entries {
@@ -81,8 +157,7 @@ func ListTrenches(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := ListTrenchesResponse{Trenches: trenches}
-	writeJSON(w, r, &resp)
+	return http.StatusOK, &ListTrenchesResponse{Trenches: trenches}
 }
 
 type SyncRequest struct {
@@ -93,12 +168,35 @@ type SyncRequest struct {
 	Surveys     []Survey `json:"surveys"`     // Surveys to be committed
 }
 
+func (r SyncRequest) String() string {
+	return fmt.Sprintf("{head: %s, device: %s, surveys: [%d surveys]}",
+		Prefix(r.Head, 7), r.Device, len(r.Surveys))
+}
+
 type SyncResponse struct {
 	Status      string   `json:"status"`                // One of: ok, pushed, missing, pull
 	Version     string   `json:"version"`               // Current version of the server
 	Preferences []byte   `json:"preferences,omitempty"` // Serialized preferences if different
 	Missing     []string `json:"missing,omitempty"`     // List of missing attachments
 	Updates     []Patch  `json:"updates,omitempty"`     // List of patches need to be applied on the client
+}
+
+func (r SyncResponse) String() string {
+	version := Prefix(r.Version, 7)
+	if version == "" {
+		version = "-"
+	}
+	s := fmt.Sprintf("{status: %s, version: %s", r.Status, version)
+	if len(r.Missing) > 0 {
+		s += fmt.Sprintf(", missing: [%d attachments]", len(r.Missing))
+	}
+	if len(r.Preferences) > 0 {
+		s += fmt.Sprintf(", preferences: <%d bytes>", len(r.Preferences))
+	}
+	if len(r.Updates) > 0 {
+		s += fmt.Sprintf(", updates: [%d patches]", len(r.Updates))
+	}
+	return s + "}"
 }
 
 // Sync Status
@@ -115,12 +213,10 @@ type Patch struct {
 	New Survey `json:"new"`
 }
 
-func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
+func (s *Server) SyncTrench(c *gin.Context, b *Backend) (int, any) {
 	var req SyncRequest
-	dec := json.NewDecoder(r.Body)
-	err := dec.Decode(&req)
-	if err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return http.StatusBadRequest, err
 	}
 
 	log.Printf("> SYNC %s %s", b.Trench, req)
@@ -135,7 +231,7 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 		old, _ := b.ReadSurveysAtVersion(req.Head)
 		new, err := b.ReadSurveys()
 		if err != nil {
-			return err
+			return http.StatusInternalServerError, err
 		}
 
 		// Generate patches
@@ -164,7 +260,7 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 		}
 
 		log.Printf("< SYNC %s %s", b.Trench, resp)
-		return writeJSON(w, r, &resp)
+		return http.StatusOK, &resp
 	}
 
 	// The client is in the right version, but we need to check that we
@@ -185,12 +281,12 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 			Missing: missingAttachments.Array(),
 		}
 		log.Printf("< SYNC %s %s", b.Trench, resp)
-		return writeJSON(w, r, &resp)
+		return http.StatusOK, &resp
 	}
 
 	newHead, err := b.WriteTrench(req.Device, req.Message, req.Preferences, req.Surveys)
 	if err != nil {
-		return err
+		return http.StatusBadRequest, err
 	}
 
 	resp := SyncResponse{Version: newHead}
@@ -200,64 +296,59 @@ func SyncTrench(w http.ResponseWriter, r *http.Request, b *Backend) error {
 		resp.Status = StatusOK
 	}
 	log.Printf("< SYNC %s %s", b.Trench, resp)
-	return writeJSON(w, r, &resp)
+	return http.StatusOK, &resp
 }
 
-func ReadAttachment(w http.ResponseWriter, r *http.Request, b *Backend) error {
-	vars := mux.Vars(r)
-	name := vars["name"]
+func (s *Server) ReadAttachment(c *gin.Context, b *Backend) (int, any) {
+	name := c.Param("name")
 	if name == "" {
-		return fmt.Errorf("Missing attachment name")
+		return http.StatusBadRequest, fmt.Errorf("Missing attachment name")
 	}
-	checksum := r.URL.Query().Get("checksum")
+	checksum, _ := c.GetQuery("checksum")
 	if checksum == "" {
-		return fmt.Errorf("Missing attachment checksum")
+		return http.StatusBadRequest, fmt.Errorf("Missing attachment checksum")
 	}
 
 	data, err := b.ReadAttachment(name, checksum)
 	if err != nil {
-		return err
+		return http.StatusInternalServerError, err
 	}
 
-	ctype := mime.TypeByExtension(filepath.Ext(name))
-	if ctype != "" {
-		w.Header().Set("Content-Type", ctype)
+	contentType := mime.TypeByExtension(filepath.Ext(name))
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
-	w.Header().Set("Content-Length", fmt.Sprint(len(data)))
-	w.WriteHeader(http.StatusOK)
-
-	n, err := w.Write(data)
-	// We can't really return any errors at this point, just report it
-	if err != nil {
-		log.Printf("Error sending attachment %s: %s", name, err)
-	} else if n != len(data) {
-		log.Printf("Incomplete write for attachment %s (%d/%d)", name, n, len(data))
-	}
-	return nil
+	c.Data(http.StatusOK, contentType, data)
+	return http.StatusOK, nil
 }
 
-func WriteAttachment(w http.ResponseWriter, r *http.Request, b *Backend) error {
+func (s *Server) WriteAttachment(c *gin.Context, b *Backend) (int, any) {
 	defer func() {
 		// Drain any leftovers and close
-		io.Copy(io.Discard, r.Body)
-		r.Body.Close()
+		_, _ = io.Copy(io.Discard, c.Request.Body)
+		c.Request.Body.Close()
 	}()
 
-	vars := mux.Vars(r)
-	name := vars["name"]
+	name := c.Param("name")
 	if name == "" {
-		return fmt.Errorf("Missing attachment name")
+		return http.StatusBadRequest, fmt.Errorf("Missing attachment name")
 	}
-	checksum := r.URL.Query().Get("checksum")
+	checksum, _ := c.GetQuery("checksum")
 	if checksum == "" {
-		return fmt.Errorf("Missing attachment checksum")
+		return http.StatusBadRequest, fmt.Errorf("Missing attachment checksum")
 	}
 
-	data, err := io.ReadAll(r.Body)
+	data, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		return fmt.Errorf("Error uploading attachment %s/%s (%s): %w", b.Trench, name, b.User, err)
+		return http.StatusBadRequest, err
 	}
-	return b.WriteAttachment(name, checksum, data)
+
+	err = b.WriteAttachment(name, checksum, data)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+
+	return http.StatusOK, nil
 }
 
 type ReadSurveysResponse struct {
@@ -265,74 +356,36 @@ type ReadSurveysResponse struct {
 	Surveys []Survey `json:"surveys"`
 }
 
-func ReadSurveys(w http.ResponseWriter, r *http.Request, b *Backend) error {
-	version := r.URL.Query().Get("version")
+func (s *Server) ReadSurveys(c *gin.Context, b *Backend) (int, any) {
+	version, _ := c.GetQuery("version")
 	if version == "" {
 		version = b.Head()
 	}
 	surveys, err := b.ReadSurveysAtVersion(version)
 	if err != nil {
-		return err
+		return http.StatusInternalServerError, err
 	}
 
 	resp := ReadSurveysResponse{
 		Version: version,
 		Surveys: surveys,
 	}
-	return writeJSON(w, r, resp)
+	return http.StatusOK, &resp
 }
 
-func ReadSurveyVersions(w http.ResponseWriter, r *http.Request, b *Backend) error {
-	vars := mux.Vars(r)
-	id := vars["uuid"]
+func (s *Server) ReadSurveyVersions(c *gin.Context, b *Backend) (int, any) {
+	id := c.Param("uuid")
 	versions, err := b.ReadAllSurveyVersions(id)
 	if err != nil {
-		return err
+		return http.StatusInternalServerError, err
 	}
-	return writeJSON(w, r, versions)
+	return http.StatusOK, versions
 }
 
-func ListVersions(w http.ResponseWriter, r *http.Request, b *Backend) error {
+func (s *Server) ListVersions(c *gin.Context, b *Backend) (int, any) {
 	versions, err := b.ListVersions()
 	if err != nil {
-		return err
+		return http.StatusInternalServerError, err
 	}
-	return writeJSON(w, r, versions)
-}
-
-func writeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
-	w.Header().Set("Content-Type", "application/json")
-
-	enc := json.NewEncoder(w)
-	if r.URL.Query().Has("debug") {
-		enc.SetIndent("", "  ")
-	}
-
-	w.WriteHeader(http.StatusOK)
-	// We can't really report any errors after this point
-	enc.Encode(v)
-	return nil
-}
-
-func (r SyncRequest) String() string {
-	return fmt.Sprintf("{head: %s, device: %s, surveys: [%d surveys]}",
-		Prefix(r.Head, 7), r.Device, len(r.Surveys))
-}
-
-func (r SyncResponse) String() string {
-	version := Prefix(r.Version, 7)
-	if version == "" {
-		version = "-"
-	}
-	s := fmt.Sprintf("{status: %s, version: %s", r.Status, version)
-	if len(r.Missing) > 0 {
-		s += fmt.Sprintf(", missing: [%d attachments]", len(r.Missing))
-	}
-	if len(r.Preferences) > 0 {
-		s += fmt.Sprintf(", preferences: <%d bytes>", len(r.Preferences))
-	}
-	if len(r.Updates) > 0 {
-		s += fmt.Sprintf(", updates: [%d patches]", len(r.Updates))
-	}
-	return s + "}"
+	return http.StatusOK, versions
 }

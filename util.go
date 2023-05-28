@@ -58,14 +58,6 @@ func Prefix(s string, n int) string {
 
 type Set map[string]struct{}
 
-func NewSet(a []string) Set {
-	s := make(Set)
-	for _, k := range a {
-		s[k] = struct{}{}
-	}
-	return s
-}
-
 func (s Set) Array() []string {
 	var a []string
 	for k := range s {
@@ -93,9 +85,4 @@ func (s Set) Union(a Set) Set {
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
 	return string(bytes), err
-}
-
-func CheckPasswordHash(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
 }

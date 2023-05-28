@@ -1,40 +1,26 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
-	_ "embed"
-
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
 )
 
 // Global state controlled by CLI flags
 var (
-	CertsDir     string
-	ContactEmail string
-	HostName     string
-	ListenAddr   string
-	ListenAll    bool
-	ListenPort   int
-	RootDir      string
-	Verbose      bool
+	ListenAddr string
+	ListenAll  bool
+	ListenPort int
+	Verbose    bool
 )
-
-const UsersTxtHeader = `# Lines starting with # are ignored
-# Format is:
-#   USER:PASSWORD
-`
 
 type Command struct {
 	Name string
 	Help string
-	Func func([]string) error
+	Func func(string, []string) error
 }
 
 var commands = []Command{
@@ -44,84 +30,6 @@ var commands = []Command{
 	{"deluser", "Delete a user from a project", delUserCmd},
 	{"listusers", "List all users in a project", listUsersCmd},
 	{"import", "Import a Preferences file", importCmd},
-}
-
-type ServerHandler func(http.ResponseWriter, *http.Request, *Backend) error
-
-func addRoute(r *mux.Router, method, path string, handler ServerHandler) {
-	// Wrapper function to turn handler into http.HandleFunc compatible form
-	h := func(w http.ResponseWriter, r *http.Request) {
-		httpError := func(msg string, code int) {
-			log.Printf("%s %s [%d %s]", r.Method, r.URL, code, msg)
-			http.Error(w, msg, code)
-		}
-
-		vars := mux.Vars(r)
-		project := vars["project"]
-		if project == "" {
-			httpError("Missing project", http.StatusNotFound)
-			return
-		}
-		trench := vars["trench"]
-		if trench == "" {
-			httpError("Missing trench", http.StatusNotFound)
-			return
-		}
-
-		user, password, ok := r.BasicAuth()
-		if !ok {
-			httpError("Missing authorization header", http.StatusUnauthorized)
-			return
-		}
-		if !hasAccess(project, user, password) {
-			httpError("Invalid username or password", http.StatusUnauthorized)
-			return
-		}
-
-		log.Printf("%s %s (%s)", r.Method, r.URL, user)
-
-		projectDir := filepath.Join(RootDir, project)
-		b, err := NewBackend(projectDir, user, trench)
-		if err != nil {
-			msg := fmt.Sprintf("Error initializing backend for %s: %s", trench, err)
-			log.Println(msg)
-			http.Error(w, msg, http.StatusBadRequest)
-			return
-		}
-
-		err = handler(w, r, b)
-		if err != nil {
-			log.Printf("ERROR %s", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-	r.HandleFunc(path, h).Methods(method)
-}
-
-// Check if a user has acess to a project
-func hasAccess(project, user, password string) bool {
-	usersFile := filepath.Join(RootDir, project, "users.txt")
-	f, err := os.Open(usersFile)
-	if err != nil {
-		log.Printf("Can't open users file: %s", usersFile)
-		return false
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		u, p, _ := strings.Cut(line, ":")
-
-		if u == user {
-			return CheckPasswordHash(password, p)
-		}
-	}
-	return false
 }
 
 func usage() {
@@ -134,15 +42,20 @@ func usage() {
 
 func main() {
 	log.SetFlags(0)
+	gin.SetMode(gin.ReleaseMode)
 
+	var rootDir string
 	if val := os.Getenv("IDIG_SERVER_DIR"); val != "" {
-		RootDir = val
+		rootDir = val
 	} else {
-		dir, err := os.UserHomeDir()
+		home, err := os.UserHomeDir()
 		if err != nil {
 			log.Fatal(err)
 		}
-		RootDir = dir
+		rootDir = filepath.Join(home, "iDig")
+		if err := os.MkdirAll(rootDir, 0o755); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	if len(os.Args) < 2 {
@@ -154,7 +67,7 @@ func main() {
 
 	for _, c := range commands {
 		if c.Name == cmd {
-			err := c.Func(args)
+			err := c.Func(rootDir, args)
 			if err != nil {
 				log.Fatal(err)
 			}
