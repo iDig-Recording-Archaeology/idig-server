@@ -31,9 +31,9 @@ func NewServer(rootDir string) *Server {
 	s.HandleTrench(http.MethodPost, "/idig/:project/:trench", s.SyncTrench)
 	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/attachments/:name", s.ReadAttachment)
 	s.HandleTrench(http.MethodPut, "/idig/:project/:trench/attachments/:name", s.WriteAttachment)
-	s.HandleTrench(http.MethodGet, "/idig/{project}/{trench}/surveys", s.ReadSurveys)
-	s.HandleTrench(http.MethodGet, "/idig/{project}/{trench}/surveys/{uuid}/versions", s.ReadSurveyVersions)
-	s.HandleTrench(http.MethodGet, "/idig/{project}/{trench}/versions", s.ListVersions)
+	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/surveys", s.ReadSurveys)
+	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/surveys/:uuid/versions", s.ReadSurveyVersions)
+	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/versions", s.ListVersions)
 	return s
 }
 
