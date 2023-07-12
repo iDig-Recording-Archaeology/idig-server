@@ -25,7 +25,11 @@ func NewServer(rootDir string) *Server {
 	s := &Server{RootDir: rootDir}
 
 	s.r = gin.Default()
-	s.r.Use(cors.Default())
+	config := cors.DefaultConfig()
+	config.AllowAllOrigins = true
+	config.AllowMethods = []string{"PUT", "POST", "GET"}
+	config.AllowHeaders = []string{"*"}
+	s.r.Use(cors.New(config))
 
 	s.Handle(http.MethodGet, "/idig", s.ListTrenches)
 	s.HandleTrench(http.MethodPost, "/idig/:project/:trench", s.SyncTrench)
