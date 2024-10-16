@@ -33,6 +33,7 @@ func NewServer(rootDir string) *Server {
 
 	s.Handle(http.MethodGet, "/idig", s.ListTrenches)
 	s.HandleTrench(http.MethodPost, "/idig/:project/:trench", s.SyncTrench)
+	s.HandleTrench(http.MethodGet, "/idig/:project/:trench", s.ReadTrench)
 	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/attachments/:name", s.ReadAttachment)
 	s.HandleTrench(http.MethodPut, "/idig/:project/:trench/attachments/:name", s.WriteAttachment)
 	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/surveys", s.ReadSurveys)
@@ -287,6 +288,9 @@ func (s *Server) SyncTrench(c *gin.Context, b *Backend) (int, any) {
 		if len(patches) == 0 {
 			status = StatusOK
 		} else {
+			// At this point, you have changes past the server's head but the trench
+			// has been made read only so you can't push your changes.
+			// Return forbidden to push your changes.
 			status = StatusForbidden
 		}
 
@@ -334,6 +338,36 @@ func (s *Server) SyncTrench(c *gin.Context, b *Backend) (int, any) {
 		resp.Status = StatusOK
 	}
 	log.Printf("< SYNC %s %s", b.Trench, resp)
+	return http.StatusOK, &resp
+}
+
+func (s *Server) ReadTrench(c *gin.Context, b *Backend) (int, any) {
+	version, _ := c.GetQuery("version")
+	if version == "" {
+		version = b.Head()
+	}
+
+	log.Printf("> PULL %s %s", b.Trench, version)
+
+	newSurveys, err := b.ReadSurveysAtVersion(version)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	newPrefs, err := b.ReadPreferencesAtVersion(version)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+
+	patches := diffSurveys(nil, newSurveys)
+
+	resp := SyncResponse{
+		Status:      StatusPull,
+		Version:     version,
+		Updates:     patches,
+		Preferences: newPrefs,
+	}
+
+	log.Printf("< PULL %s %s", b.Trench, resp)
 	return http.StatusOK, &resp
 }
 
