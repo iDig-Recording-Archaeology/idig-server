@@ -396,6 +396,55 @@ func (s *Server) ReadAttachment(c *gin.Context, b *Backend) (int, any) {
 		return http.StatusBadRequest, fmt.Errorf("Missing attachment checksum")
 	}
 
+	size, _ := c.GetQuery("size")
+	
+	// Handle resized images
+	if size != "" {
+		if size != "thumbnail" && size != "preview" {
+			return http.StatusBadRequest, fmt.Errorf("Invalid size parameter: must be 'thumbnail' or 'preview'")
+		}
+		
+		project := c.Param("project")
+		trench := c.Param("trench")
+		
+		// Check cache first
+		cachePath := GetCachePath(s.RootDir, project, trench, checksum, size)
+		if FileExists(cachePath) {
+			data, err := os.ReadFile(cachePath)
+			if err == nil {
+				c.Data(http.StatusOK, "image/jpeg", data)
+				return http.StatusOK, nil
+			}
+		}
+		
+		// Cache miss - read original and resize
+		data, err := b.ReadAttachment(name, checksum)
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+		
+		var maxDimension uint
+		if size == "thumbnail" {
+			maxDimension = 265
+		} else { // preview
+			maxDimension = 1024
+		}
+		
+		resizedData, err := ResizeImage(data, maxDimension, name)
+		if err != nil {
+			return http.StatusInternalServerError, fmt.Errorf("Failed to resize image: %w", err)
+		}
+		
+		// Save to cache
+		if err := EnsureCacheDir(cachePath); err == nil {
+			os.WriteFile(cachePath, resizedData, 0644)
+		}
+		
+		c.Data(http.StatusOK, "image/jpeg", resizedData)
+		return http.StatusOK, nil
+	}
+
+	// Original image (existing behavior)
 	data, err := b.ReadAttachment(name, checksum)
 	if err != nil {
 		return http.StatusInternalServerError, err
