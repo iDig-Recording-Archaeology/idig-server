@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/image/draw"
+	"golang.org/x/image/tiff"
 )
 
 func FileExists(name string) bool {
@@ -104,6 +105,8 @@ func ResizeImage(data []byte, maxDimension uint, filename string) ([]byte, error
 		img, err = jpeg.Decode(bytes.NewReader(data))
 	case ".png":
 		img, err = png.Decode(bytes.NewReader(data))
+	case ".tif", ".tiff":
+		img, err = tiff.Decode(bytes.NewReader(data))
 	default:
 		return nil, fmt.Errorf("unsupported image format: %s", ext)
 	}

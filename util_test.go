@@ -7,7 +7,10 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/image/tiff"
 )
 
 // createTestJPEG creates a test JPEG image with given dimensions
@@ -42,14 +45,34 @@ func createTestPNG(width, height int) []byte {
 	return buf.Bytes()
 }
 
+// createTestTIFF creates a test TIFF image with given dimensions
+func createTestTIFF(width, height int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	
+	// Fill with a simple pattern
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, image.NewRGBA(image.Rect(0, 0, 1, 1)).At(0, 0))
+		}
+	}
+	
+	var buf bytes.Buffer
+	tiff.Encode(&buf, img, nil)
+	return buf.Bytes()
+}
+
 // getImageDimensions decodes an image and returns its dimensions
 func getImageDimensions(data []byte, filename string) (int, int, error) {
 	var img image.Image
 	var err error
 	
-	if filepath.Ext(filename) == ".png" {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".png":
 		img, err = png.Decode(bytes.NewReader(data))
-	} else {
+	case ".tif", ".tiff":
+		img, err = tiff.Decode(bytes.NewReader(data))
+	default:
 		img, err = jpeg.Decode(bytes.NewReader(data))
 	}
 	
@@ -100,6 +123,27 @@ func TestResizeImage_PNG_LargerThanMax(t *testing.T) {
 	
 	if width != 150 || height != 300 {
 		t.Errorf("Expected 150x300, got %dx%d", width, height)
+	}
+}
+
+func TestResizeImage_TIFF_LargerThanMax(t *testing.T) {
+	// Create a 800x1000 TIFF (taller than wide)
+	testData := createTestTIFF(800, 1000)
+	
+	// Resize to max 400px
+	resized, err := ResizeImage(testData, 400, "test.tif")
+	if err != nil {
+		t.Fatalf("Failed to resize TIFF image: %v", err)
+	}
+	
+	// Check dimensions - should be 320x400 (maintaining aspect ratio)
+	width, height, err := getImageDimensions(resized, "test.jpg") // Output is always JPEG
+	if err != nil {
+		t.Fatalf("Failed to decode resized image: %v", err)
+	}
+	
+	if width != 320 || height != 400 {
+		t.Errorf("Expected 320x400, got %dx%d", width, height)
 	}
 }
 
