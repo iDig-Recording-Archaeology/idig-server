@@ -145,9 +145,12 @@ func ResizeImage(data []byte, maxDimension uint, filename string) ([]byte, error
 	return buf.Bytes(), nil
 }
 
-func GetCachePath(rootDir, project, trench, checksum, size string) string {
+func GetCachePath(rootDir, project, trench, name, checksum, size string) string {
 	cacheDir := filepath.Join(rootDir, ".cache", project, trench)
-	return filepath.Join(cacheDir, fmt.Sprintf("%s-%s.jpg", checksum, size))
+	// Sanitize filename to prevent path issues
+	safeName := strings.ReplaceAll(filepath.Base(name), "/", "_")
+	safeName = strings.ReplaceAll(safeName, "\\", "_")
+	return filepath.Join(cacheDir, fmt.Sprintf("%s-%s-%s.jpg", safeName, checksum, size))
 }
 
 func EnsureCacheDir(path string) error {

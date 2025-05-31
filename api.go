@@ -408,7 +408,7 @@ func (s *Server) ReadAttachment(c *gin.Context, b *Backend) (int, any) {
 		trench := c.Param("trench")
 		
 		// Check cache first
-		cachePath := GetCachePath(s.RootDir, project, trench, checksum, size)
+		cachePath := GetCachePath(s.RootDir, project, trench, name, checksum, size)
 		if FileExists(cachePath) {
 			data, err := os.ReadFile(cachePath)
 			if err == nil {

@@ -200,11 +200,12 @@ func TestGetCachePath(t *testing.T) {
 	rootDir := "/test/root"
 	project := "myproject"
 	trench := "mytrench"
+	name := "photo.jpg"
 	checksum := "abc123"
 	size := "thumbnail"
 	
-	expected := "/test/root/.cache/myproject/mytrench/abc123-thumbnail.jpg"
-	actual := GetCachePath(rootDir, project, trench, checksum, size)
+	expected := "/test/root/.cache/myproject/mytrench/photo.jpg-abc123-thumbnail.jpg"
+	actual := GetCachePath(rootDir, project, trench, name, checksum, size)
 	
 	if actual != expected {
 		t.Errorf("Expected %s, got %s", expected, actual)
