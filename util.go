@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"image"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/disintegration/imaging"
-	"github.com/rwcarlsen/goexif/exif"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -94,19 +92,13 @@ func HashPassword(password string) (string, error) {
 }
 
 func ResizeImage(data []byte, maxDimension uint, filename string) ([]byte, error) {
-	// Step 1: Decode image with automatic format detection
-	img, err := imaging.Decode(bytes.NewReader(data))
+	// Step 1: Decode image with automatic EXIF orientation handling
+	img, err := imaging.Decode(bytes.NewReader(data), imaging.AutoOrientation(true))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
 	
-	// Step 2: Handle EXIF orientation for JPEG files
-	ext := strings.ToLower(filepath.Ext(filename))
-	if ext == ".jpg" || ext == ".jpeg" {
-		img = fixOrientation(img, data)
-	}
-	
-	// Step 3: Check if resize is needed
+	// Step 2: Check if resize is needed
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
@@ -122,10 +114,10 @@ func ResizeImage(data []byte, maxDimension uint, filename string) ([]byte, error
 		return buf.Bytes(), nil
 	}
 	
-	// Step 4: Resize maintaining aspect ratio
+	// Step 3: Resize maintaining aspect ratio
 	resized := imaging.Fit(img, int(maxDimension), int(maxDimension), imaging.Lanczos)
 	
-	// Step 5: Encode as JPEG
+	// Step 4: Encode as JPEG
 	var buf bytes.Buffer
 	err = imaging.Encode(&buf, resized, imaging.JPEG, imaging.JPEGQuality(85))
 	if err != nil {
@@ -135,59 +127,6 @@ func ResizeImage(data []byte, maxDimension uint, filename string) ([]byte, error
 	return buf.Bytes(), nil
 }
 
-// fixOrientation applies EXIF orientation transformation
-func fixOrientation(img image.Image, data []byte) image.Image {
-	// Extract EXIF data
-	x, err := exif.Decode(bytes.NewReader(data))
-	if err != nil {
-		// No EXIF data or couldn't parse, return original
-		return img
-	}
-	
-	// Get orientation tag
-	tag, err := x.Get(exif.Orientation)
-	if err != nil {
-		// No orientation tag, return original
-		return img
-	}
-	
-	orientation, err := tag.Int(0)
-	if err != nil {
-		// Couldn't read orientation value, return original
-		return img
-	}
-	
-	// Apply transformation based on EXIF orientation value
-	switch orientation {
-	case 1:
-		// Normal orientation, no change needed
-		return img
-	case 2:
-		// Horizontal flip
-		return imaging.FlipH(img)
-	case 3:
-		// 180° rotation
-		return imaging.Rotate180(img)
-	case 4:
-		// Vertical flip
-		return imaging.FlipV(img)
-	case 5:
-		// Vertical flip + 90° CW rotation
-		return imaging.Rotate90(imaging.FlipV(img))
-	case 6:
-		// 90° CW rotation
-		return imaging.Rotate90(img)
-	case 7:
-		// Horizontal flip + 90° CW rotation
-		return imaging.Rotate90(imaging.FlipH(img))
-	case 8:
-		// 270° CW rotation (90° CCW)
-		return imaging.Rotate270(img)
-	default:
-		// Unknown orientation, return original
-		return img
-	}
-}
 
 func GetCachePath(rootDir, project, trench, name, checksum, size string) string {
 	cacheDir := filepath.Join(rootDir, ".cache", project, trench)
