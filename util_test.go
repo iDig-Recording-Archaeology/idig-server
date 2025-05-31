@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"image/png"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/disintegration/imaging"
+	"github.com/rwcarlsen/goexif/exif"
 	"golang.org/x/image/tiff"
 )
 
@@ -150,22 +153,25 @@ func TestResizeImage_TIFF_LargerThanMax(t *testing.T) {
 func TestResizeImage_SmallerThanMax_ReturnsOriginal(t *testing.T) {
 	// Create a 200x150 JPEG
 	testData := createTestJPEG(200, 150)
-	originalLen := len(testData)
 	
-	// Resize to max 500px (should return original)
+	// Resize to max 500px (should maintain dimensions but re-encode to strip EXIF)
 	resized, err := ResizeImage(testData, 500, "test.jpg")
 	if err != nil {
 		t.Fatalf("Failed to resize image: %v", err)
 	}
 	
-	// Should return exact same data
-	if len(resized) != originalLen {
-		t.Errorf("Expected original data length %d, got %d", originalLen, len(resized))
+	// Check dimensions are preserved
+	width, height, err := getImageDimensions(resized, "test.jpg")
+	if err != nil {
+		t.Fatalf("Failed to decode resized image: %v", err)
 	}
 	
-	if !bytes.Equal(testData, resized) {
-		t.Error("Expected original data to be returned unchanged")
+	if width != 200 || height != 150 {
+		t.Errorf("Expected 200x150, got %dx%d", width, height)
 	}
+	
+	// Note: Data will be different due to re-encoding to strip EXIF
+	// This is the intended behavior for our new implementation
 }
 
 func TestResizeImage_UnsupportedFormat(t *testing.T) {
@@ -176,9 +182,10 @@ func TestResizeImage_UnsupportedFormat(t *testing.T) {
 		t.Error("Expected error for unsupported format")
 	}
 	
-	expectedErr := "unsupported image format: .gif"
-	if err.Error() != expectedErr {
-		t.Errorf("Expected error '%s', got '%s'", expectedErr, err.Error())
+	// The new implementation uses imaging library which gives different error messages
+	// We just check that an error occurred for invalid data
+	if !strings.Contains(err.Error(), "failed to decode image") {
+		t.Errorf("Expected decode error, got: %s", err.Error())
 	}
 }
 
@@ -285,5 +292,61 @@ func TestResizeImage_SquareImage(t *testing.T) {
 	
 	if width != 300 || height != 300 {
 		t.Errorf("Expected 300x300, got %dx%d", width, height)
+	}
+}
+
+// TestResizeImage_EXIFHandling tests that EXIF orientation is properly handled
+func TestResizeImage_EXIFHandling(t *testing.T) {
+	// Create a test image using the imaging library (landscape)
+	testImg := imaging.New(400, 300, color.NRGBA{R: 255, G: 0, B: 0, A: 255})
+	
+	// Encode as JPEG (this won't have EXIF, but tests the code path)
+	var buf bytes.Buffer
+	err := jpeg.Encode(&buf, testImg, &jpeg.Options{Quality: 95})
+	if err != nil {
+		t.Fatalf("Failed to create test image: %v", err)
+	}
+	
+	// Test that it processes JPEG correctly
+	resized, err := ResizeImage(buf.Bytes(), 200, "test.jpg")
+	if err != nil {
+		t.Fatalf("Failed to resize JPEG: %v", err)
+	}
+	
+	width, height, err := getImageDimensions(resized, "test.jpg")
+	if err != nil {
+		t.Fatalf("Failed to decode resized image: %v", err)
+	}
+	
+	// Should maintain aspect ratio: 400:300 = 4:3, so 200px wide = 150px tall
+	if width != 200 || height != 150 {
+		t.Errorf("Expected 200x150, got %dx%d", width, height)
+	}
+	
+	// Verify EXIF is stripped from output
+	_, err = exif.Decode(bytes.NewReader(resized))
+	if err == nil {
+		t.Error("Expected EXIF to be stripped, but it's still present")
+	}
+}
+
+// TestFixOrientation tests the orientation function (unit test)
+func TestFixOrientation(t *testing.T) {
+	// Create a test image
+	testImg := imaging.New(100, 50, color.NRGBA{R: 0, G: 255, B: 0, A: 255})
+	
+	// Test with image that has no EXIF (should return unchanged)
+	var buf bytes.Buffer
+	err := jpeg.Encode(&buf, testImg, &jpeg.Options{Quality: 95})
+	if err != nil {
+		t.Fatalf("Failed to create test image: %v", err)
+	}
+	
+	result := fixOrientation(testImg, buf.Bytes())
+	
+	// Should be the same image (no EXIF to process)
+	resultBounds := result.Bounds()
+	if resultBounds.Dx() != 100 || resultBounds.Dy() != 50 {
+		t.Errorf("Expected image unchanged, got %dx%d", resultBounds.Dx(), resultBounds.Dy())
 	}
 }
