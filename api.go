@@ -399,9 +399,9 @@ func (s *Server) ReadAttachment(c *gin.Context, b *Backend) (int, any) {
 	size, _ := c.GetQuery("size")
 	
 	// Handle resized images
-	if size != "" {
+	if size != "" && size != "original" {
 		if size != "thumbnail" && size != "preview" {
-			return http.StatusBadRequest, fmt.Errorf("Invalid size parameter: must be 'thumbnail' or 'preview'")
+			return http.StatusBadRequest, fmt.Errorf("Invalid size parameter: must be 'thumbnail', 'preview', or 'original'")
 		}
 		
 		project := c.Param("project")
