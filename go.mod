@@ -8,8 +8,9 @@ require (
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-git/go-git/v5 v5.12.0
-	golang.org/x/crypto v0.28.0
+	golang.org/x/crypto v0.38.0
 	golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53
+	golang.org/x/image v0.27.0
 )
 
 require (
@@ -48,9 +49,8 @@ require (
 	github.com/ugorji/go/codec v1.2.12 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	golang.org/x/arch v0.11.0 // indirect
-	golang.org/x/image v0.27.0 // indirect
-	golang.org/x/net v0.30.0 // indirect
-	golang.org/x/sys v0.26.0 // indirect
+	golang.org/x/net v0.40.0 // indirect
+	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	google.golang.org/protobuf v1.35.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
