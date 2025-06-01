@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/disintegration/imaging"
+	"github.com/rwcarlsen/goexif/exif"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -92,13 +93,35 @@ func HashPassword(password string) (string, error) {
 }
 
 func ResizeImage(data []byte, maxDimension uint, filename string) ([]byte, error) {
-	// Step 1: Decode image with automatic EXIF orientation handling
-	img, err := imaging.Decode(bytes.NewReader(data), imaging.AutoOrientation(true))
+	// Step 1: Decode image WITHOUT auto-orientation first
+	img, err := imaging.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
 	
-	// Step 2: Check if resize is needed
+	// Step 2: Manually check EXIF orientation and apply rotation
+	orientation := 1 // default: normal
+	exifData, err := exif.Decode(bytes.NewReader(data))
+	if err == nil {
+		orientTag, err := exifData.Get(exif.Orientation)
+		if err == nil {
+			orientation, _ = orientTag.Int(0)
+		}
+	}
+	
+	// Apply rotation based on EXIF orientation
+	switch orientation {
+	case 3: // 180 degrees
+		img = imaging.Rotate180(img)
+	case 6: // 90 degrees CW (270 CCW)
+		img = imaging.Rotate270(img)
+	case 8: // 270 degrees CW (90 CCW)
+		img = imaging.Rotate90(img)
+	// case 1 is normal, no rotation needed
+	// We're ignoring mirrored orientations (2, 4, 5, 7) for now
+	}
+	
+	// Step 3: Check if resize is needed
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
@@ -114,10 +137,10 @@ func ResizeImage(data []byte, maxDimension uint, filename string) ([]byte, error
 		return buf.Bytes(), nil
 	}
 	
-	// Step 3: Resize maintaining aspect ratio
+	// Step 4: Resize maintaining aspect ratio
 	resized := imaging.Fit(img, int(maxDimension), int(maxDimension), imaging.Lanczos)
 	
-	// Step 4: Encode as JPEG
+	// Step 5: Encode as JPEG
 	var buf bytes.Buffer
 	err = imaging.Encode(&buf, resized, imaging.JPEG, imaging.JPEGQuality(85))
 	if err != nil {
