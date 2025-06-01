@@ -34,6 +34,7 @@ func NewServer(rootDir string) *Server {
 	s.Handle(http.MethodGet, "/idig", s.ListTrenches)
 	s.HandleTrench(http.MethodPost, "/idig/:project/:trench", s.SyncTrench)
 	s.HandleTrench(http.MethodGet, "/idig/:project/:trench", s.ReadTrench)
+	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/attachments", s.ListAttachments)
 	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/attachments/:name", s.ReadAttachment)
 	s.HandleTrench(http.MethodPut, "/idig/:project/:trench/attachments/:name", s.WriteAttachment)
 	s.HandleTrench(http.MethodGet, "/idig/:project/:trench/surveys", s.ReadSurveys)
@@ -475,4 +476,16 @@ func (s *Server) ListVersions(c *gin.Context, b *Backend) (int, any) {
 		return http.StatusInternalServerError, err
 	}
 	return http.StatusOK, versions
+}
+
+type ListAttachmentsResponse struct {
+	Attachments []Attachment `json:"attachments"`
+}
+
+func (s *Server) ListAttachments(c *gin.Context, b *Backend) (int, any) {
+	attachments, err := b.ListAttachments()
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	return http.StatusOK, &ListAttachmentsResponse{Attachments: attachments}
 }
