@@ -69,6 +69,54 @@ func TestAttachments(t *testing.T) {
 	}
 }
 
+func TestListAttachments(t *testing.T) {
+	b, err := NewMemoryBackend("test-user", "test-trench")
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Initially empty
+	attachments, err := b.ListAttachments()
+	if err != nil {
+		t.Error(err)
+	}
+	if len(attachments) != 0 {
+		t.Errorf("Expected 0 attachments, got %d", len(attachments))
+	}
+
+	// Add some attachments
+	err = b.WriteAttachment("photo.jpg", "2023-07-05T09:39:36Z", []byte("photo data"))
+	if err != nil {
+		t.Error(err)
+	}
+	err = b.WriteAttachment("document.pdf", "2023-06-21T10:15:30Z", []byte("pdf data"))
+	if err != nil {
+		t.Error(err)
+	}
+
+	// List should return both
+	attachments, err = b.ListAttachments()
+	if err != nil {
+		t.Error(err)
+	}
+	if len(attachments) != 2 {
+		t.Errorf("Expected 2 attachments, got %d", len(attachments))
+	}
+
+	// Check attachment contents
+	found := make(map[string]string)
+	for _, att := range attachments {
+		found[att.Name] = att.Checksum
+	}
+	
+	if found["photo.jpg"] != "2023-07-05T09:39:36Z" {
+		t.Errorf("Expected photo.jpg with checksum 2023-07-05T09:39:36Z")
+	}
+	if found["document.pdf"] != "2023-06-21T10:15:30Z" {
+		t.Errorf("Expected document.pdf with checksum 2023-06-21T10:15:30Z")
+	}
+}
+
 func TestTrench(t *testing.T) {
 	b, err := NewMemoryBackend("test-user", "test-trench")
 	assertNoError(t, err)
