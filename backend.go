@@ -318,6 +318,22 @@ func (b *Backend) WriteTrench(device, message string, preferences []byte, survey
 	var surveyEntries []object.TreeEntry
 	var attachmentEntries []object.TreeEntry
 
+	// Pre-load ALL attachment references for fast lookup
+	attachmentRefs := make(map[string]plumbing.Hash)
+	refs, err := b.r.References()
+	if err != nil {
+		return "", fmt.Errorf("Failed to get references: %w", err)
+	}
+	err = refs.ForEach(func(ref *plumbing.Reference) error {
+		if strings.HasPrefix(ref.Name().String(), "refs/attachments/") {
+			attachmentRefs[ref.Name().String()] = ref.Hash()
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("Failed to load attachment references: %w", err)
+	}
+
 	preferencesHash, err := b.addBlob(preferences)
 	if err != nil {
 		return "", fmt.Errorf("Failed to write preferences: %w", err)
@@ -339,12 +355,14 @@ func (b *Backend) WriteTrench(device, message string, preferences []byte, survey
 
 		for _, a := range survey.Attachments() {
 			refName := b.attachmentReference(a.Name, a.Checksum)
-			ref, err := b.r.Reference(plumbing.ReferenceName(refName), false)
-			if err != nil {
-				return "", err
+			
+			// Use cached reference lookup
+			hash, exists := attachmentRefs[refName]
+			if !exists {
+				return "", fmt.Errorf("Attachment reference '%s' not found", refName)
 			}
-			_ = ref
-			e := object.TreeEntry{Name: a.Name, Mode: filemode.Regular, Hash: ref.Hash()}
+			
+			e := object.TreeEntry{Name: a.Name, Mode: filemode.Regular, Hash: hash}
 			attachmentEntries = append(attachmentEntries, e)
 		}
 	}
@@ -427,6 +445,18 @@ func (b *Backend) ListAttachments() ([]Attachment, error) {
 }
 
 func (b *Backend) addBlob(data []byte) (plumbing.Hash, error) {
+	// Calculate hash without writing
+	hasher := plumbing.NewHasher(plumbing.BlobObject, int64(len(data)))
+	hasher.Write(data)
+	hash := hasher.Sum()
+	
+	// Check if object already exists
+	if b.r.Storer.HasEncodedObject(hash) == nil {
+		// Object already exists, return its hash
+		return hash, nil
+	}
+	
+	// Object doesn't exist, create it
 	obj := b.r.Storer.NewEncodedObject()
 	obj.SetType(plumbing.BlobObject)
 	obj.SetSize(int64(len(data)))
