@@ -399,20 +399,20 @@ func (b *Backend) ListAttachments() ([]Attachment, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var attachments []Attachment
 	err = refs.ForEach(func(ref *plumbing.Reference) error {
 		if !strings.HasPrefix(ref.Name().String(), "refs/attachments/") {
 			return nil
 		}
-		
+
 		enc := base64.URLEncoding.WithPadding(base64.NoPadding)
 		encoded := strings.TrimPrefix(ref.Name().String(), "refs/attachments/")
 		decoded, err := enc.DecodeString(encoded)
 		if err != nil {
 			return nil
 		}
-		
+
 		parts := strings.SplitN(string(decoded), "/", 2)
 		if len(parts) == 2 {
 			attachments = append(attachments, Attachment{
@@ -422,11 +422,17 @@ func (b *Backend) ListAttachments() ([]Attachment, error) {
 		}
 		return nil
 	})
-	
+
 	return attachments, err
 }
 
 func (b *Backend) addBlob(data []byte) (plumbing.Hash, error) {
+	// Check if blob already exists
+	hash := plumbing.ComputeHash(plumbing.BlobObject, data)
+	if b.r.Storer.HasEncodedObject(hash) == nil {
+		return hash, nil
+	}
+
 	obj := b.r.Storer.NewEncodedObject()
 	obj.SetType(plumbing.BlobObject)
 	obj.SetSize(int64(len(data)))

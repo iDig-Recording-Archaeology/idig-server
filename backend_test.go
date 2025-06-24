@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"sort"
 	"testing"
 
@@ -108,7 +110,7 @@ func TestListAttachments(t *testing.T) {
 	for _, att := range attachments {
 		found[att.Name] = att.Checksum
 	}
-	
+
 	if found["photo.jpg"] != "2023-07-05T09:39:36Z" {
 		t.Errorf("Expected photo.jpg with checksum 2023-07-05T09:39:36Z")
 	}
@@ -162,6 +164,35 @@ func TestWritePreferences(t *testing.T) {
 	surveysAtHead, err := b.ReadSurveys()
 	assertNoError(t, err)
 	assertEqualSurveys(t, surveys, surveysAtHead)
+}
+
+// Benchmark adding a single survey to a trench containing a lot of surveys
+func BenchmarkAddSurvey(b *testing.B) {
+	root, err := os.MkdirTemp("", "idig-server.bench")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+
+	backend, err := NewBackend(root, "bench-user", "bench-trench")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	// Initial commit, skip the last survey
+	surveys := generateSurveys(10001)
+	_, err = backend.WriteTrench("init", "", nil, surveys[:10000])
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+
+	// Commit the remaining survey
+	_, err = backend.WriteTrench("final", "", nil, surveys)
+	if err != nil {
+		b.Fatal(err)
+	}
 }
 
 func assertNoError(t *testing.T, err error) {
