@@ -214,7 +214,9 @@ func assertEqualSurveys(t *testing.T, actual []Survey, expected []Survey) {
 	expectedKeys := maps.Keys(expectedMap)
 	sort.Strings(actualKeys)
 	sort.Strings(expectedKeys)
-	slices.Equal(actualKeys, expectedKeys)
+	if !slices.Equal(actualKeys, expectedKeys) {
+		t.Errorf("Survey list differs")
+	}
 }
 
 func generateSurveys(count int) []Survey {

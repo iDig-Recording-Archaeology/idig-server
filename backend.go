@@ -606,9 +606,10 @@ func (s Survey) Attachments() []Attachment {
 		var name, ts string
 		for _, s := range strings.Split(a, "\n") {
 			key, val, _ := strings.Cut(s, "=")
-			if key == "n" {
+			switch key {
+			case "n":
 				name = val
-			} else if key == "d" {
+			case "d":
 				ts = val
 			}
 		}
