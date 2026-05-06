@@ -237,6 +237,12 @@ func (s *Server) SyncTrench(c *gin.Context, b *Backend) (int, any) {
 
 	head := b.Head()
 
+	// iDig sends "invalid" or "HEAD" when it needs the server HEAD for this trench.
+	// If the trench has no server HEAD yet, return an HTTP error the client can show.
+	if head == "" && (req.Head == "invalid" || req.Head == "HEAD") {
+		return http.StatusConflict, fmt.Errorf("No data has been synced to this trench yet. Sync from an unlocked device first.")
+	}
+
 	// When our head is empty, we let the client push. This could happen if they
 	// had synced before and we somehow reset our state, or when they are starting
 	// from scratch.
