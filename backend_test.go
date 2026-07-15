@@ -221,7 +221,7 @@ func assertEqualSurveys(t *testing.T, actual []Survey, expected []Survey) {
 
 func generateSurveys(count int) []Survey {
 	var surveys []Survey
-	for i := 0; i < count; i++ {
+	for i := range count {
 		s := Survey{
 			"IdentifierUUID": fmt.Sprintf("ID%03d", i),
 			"Title":          fmt.Sprintf("Context %d", i),

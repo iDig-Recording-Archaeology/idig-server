@@ -390,7 +390,7 @@ func (b *Backend) Rollback(version string) error {
 
 func (b *Backend) attachmentReference(name, checksum string) string {
 	enc := base64.URLEncoding.WithPadding(base64.NoPadding)
-	h := enc.EncodeToString([]byte(fmt.Sprintf("%s/%s", name, checksum)))
+	h := enc.EncodeToString(fmt.Appendf(nil, "%s/%s", name, checksum))
 	return fmt.Sprintf("refs/attachments/%s", h)
 }
 
@@ -602,9 +602,9 @@ func (s Survey) ID() string {
 
 func (s Survey) Attachments() []Attachment {
 	var attachments []Attachment
-	for _, a := range strings.Split(s["RelationAttachments"], "\n\n") {
+	for a := range strings.SplitSeq(s["RelationAttachments"], "\n\n") {
 		var name, ts string
-		for _, s := range strings.Split(a, "\n") {
+		for s := range strings.SplitSeq(a, "\n") {
 			key, val, _ := strings.Cut(s, "=")
 			switch key {
 			case "n":

@@ -51,7 +51,7 @@ func NewUserDB(projectDir string) (*UserDB, error) {
 		access := []string{}
 
 		if len(t) >= 3 {
-			for _, trench := range strings.Split(t[2], ",") {
+			for trench := range strings.SplitSeq(t[2], ",") {
 				access = append(access, strings.TrimSpace(trench))
 			}
 		} else {
