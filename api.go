@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -227,6 +228,10 @@ type Patch struct {
 	New Survey `json:"new"`
 }
 
+// syncMu makes syncs run one at a time, so that no other sync can move HEAD
+// between the check of the client's head and the commit.
+var syncMu sync.Mutex
+
 func (s *Server) SyncTrench(c *gin.Context, b *Backend) (int, any) {
 	var req SyncRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -234,6 +239,9 @@ func (s *Server) SyncTrench(c *gin.Context, b *Backend) (int, any) {
 	}
 
 	log.Printf("> SYNC %s %s", b.Trench, req)
+
+	syncMu.Lock()
+	defer syncMu.Unlock()
 
 	head := b.Head()
 
